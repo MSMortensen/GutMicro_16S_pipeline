@@ -1,0 +1,2073 @@
+---
+title: "GMH_Analysis"
+author: "masmo"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    toc_depth: 4
+    collapsed: false
+    code_folding: hide
+    number_sections: true
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding,
+        output_dir = file.path(dirname(inputFile),"output"),
+        output_file = paste0("MicrobiomeAnalysis_", Sys.Date(), '.html')) 
+    })
+bibliography: references.bib
+link-citations: true
+params:
+    input: "output/full.phyloseq_object.RData"
+    meta: "CEFTA_metadata.csv"
+    neg: "Water|Neg|NC|ctrl"
+    batch: "Run"
+---
+
+# GMH ASV ANALYSIS PIPELINE
+
+This Rmarkdown contains the commands necessary to perform initial analyses of the output from the DF_GMH_PIPELINE There will be things that should be updated to fit the exact project. It is important that metadata is loaded correctly and it should contain a variable identifying negative controls and mock samples. I recommend visiting the ["Analysis of community ecology data in R"](https://www.davidzeleny.net/anadat-r/doku.php/en:start) to read about the theory behind the alpha and beta diversity and examples of the necessary R-code to execute them. For analyses of differential abundance I will use the DAtest package [(Russel et al., 2018)](https://www.biorxiv.org/content/10.1101/241802v1). Another excellent source of help is the R [cheat-sheets](https://www.rstudio.com/resources/cheatsheets/).
+
+```{r setup, eval=TRUE, echo=TRUE, message=FALSE,warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(tidyverse)
+library(phyloseq)
+library(decontam)
+library(pals)
+library(ggpubr)
+library(rstatix)
+library(vegan)
+library(reshape2)
+library(DAtest)
+library(ape)
+library(kableExtra)
+
+# Create used folders if missing
+if (!file.exists("R_objects")) dir.create(file.path(getwd(), "R_objects"))
+if (!file.exists("plots")) dir.create(file.path(getwd(), "plots"))
+if (!file.exists("tables")) dir.create(file.path(getwd(), "tables"))
+if (!file.exists("scripts")) dir.create(file.path(getwd(), "scripts"))
+
+# Print package versions
+cat("PACKAGES USED IN THIS PIPELINE:\n",
+    "tidyverse:", as.character(packageVersion("tidyverse")), "\t|\t",
+    "phyloseq:", as.character(packageVersion("phyloseq")), "\t|\t",
+    "DAtest:", as.character(packageVersion("DAtest")), "\n",
+    "reshape2:", as.character(packageVersion("reshape2")), "\t|\t",
+    "decontam:", as.character(packageVersion("decontam")), "\t|\t",
+    "ape:", as.character(packageVersion("ape")), "\n",
+    "kableExtra:", as.character(packageVersion("kableExtra")), "\t|\t",
+    "ggpubr:", as.character(packageVersion("ggpubr")), "\t\t|\t",
+    "pals:", as.character(packageVersion("pals")), "\n",
+    "rstatix:", as.character(packageVersion("rstatix")), "\t|\t",
+    "vegan", as.character(packageVersion("vegan")), "\n")
+
+```
+
+## SCRIPTS {.tabset .tabset-fade .tabset-pills}
+
+### INFO
+
+This section contains the scripts for the custom functions used in this pipeline
+
+### CLEAN TAXA
+
+This script will remove any ASV that has not been assigned a taxa at the taxa level set by the variable "tax_removed". Following that, the function will replace any remaining taxa based on the information available as follows: if order, family, genus and species is missing for a Bacilli ASV the function will replace the NA values with "Class_Bacilli". It is a requirement that the tax_table has exactly 7 columns, else the script will fail. If verbose the function will write how many reads the function removed, what percentage of the overall reads that was, and the average sample percentage removed
+
+```{r Clean_taxa_script, eval=TRUE, echo=TRUE}
+
+clean_taxa <- function(physeq, tax_remove = "Phylum", verbose = TRUE) {
+  tax <- data.frame(tax_table(physeq))
+  
+  # list ASVs that should be removed
+  remove <- is.na(tax[,tax_remove])
+  
+  # remove ASVs
+  phy.out <- prune_taxa(!remove, physeq)
+  
+  # Calculate and print statistics
+  if (verbose) {
+    # Calculate sample sums of original and cleaned
+    output <- data.frame(row.names = sample_names(physeq),
+                         org = sample_sums(physeq),
+                         cleaned = sample_sums(phy.out))
+    output$removed <- output$org - output$cleaned
+    output$prc_removed <- output$removed*100/output$org
+    
+    # Print output
+    cat("OVERVIEW OF ASVs REMOVED:\n", 
+        "Removed ASVs (%):\t", 
+        sum(remove), 
+        " (", 
+        round(sum(remove)*100/nrow(tax), digits = 3), 
+        ")\n",
+        "Removed reads (%):\t", 
+        sum(output$removed), 
+        " (",
+        round(sum(output$removed)*100/sum(output$org), digits = 3),
+        ")\n",
+        "Mean abundance removed:\t", 
+        round(mean(output$prc_removed), digits = 3),"\n",
+        "Max abundance removed:\t", 
+        round(max(output$prc_removed), digits = 3),"\n", sep = "")
+  }
+  
+  # Remove NA from tax table
+  tax <- data.frame(tax_table(phy.out))
+  
+  for (i in seq(nrow(tax))) { 
+    if (is.na(tax[i,1])) {tax[i,1:7] <- "Unknown" 
+    } else if (is.na(tax[i,2])) {tax[i,2:7] <- paste(colnames(tax)[1],tax[i,1], sep = "_") 
+    } else if (is.na(tax[i,3])) {tax[i,3:7] <- paste(colnames(tax)[2],tax[i,2], sep = "_") 
+    } else if (is.na(tax[i,4])) {tax[i,4:7] <- paste(colnames(tax)[3],tax[i,3], sep = "_") 
+    } else if (is.na(tax[i,5])) {tax[i,5:7] <- paste(colnames(tax)[4],tax[i,4], sep = "_") 
+    } else if (is.na(tax[i,6])) {tax[i,6:7] <- paste(colnames(tax)[5],tax[i,5], sep = "_") 
+    } else if (is.na(tax[i,7])) {tax[i,7] <- paste(colnames(tax)[6],tax[i,6], sep = "_") 
+    }
+  }
+  
+  # Insert modified tax_table in phyloseq object
+  tax_table(phy.out) <- as.matrix(tax) 
+  
+  # return the clean phyloseq object
+  return(phy.out)
+}
+
+# Save function
+save(clean_taxa, file = "scripts/clean_tax.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+### ALPHA DIVERSITY
+
+Alpha diversity is sensitive to sequencing depth, especially richness based metrics will increase with sequencing depth. To avoid any such bias rarefaction should be performed. Rarefaction
+
+```{r Alpha_diversity_functions, eval=TRUE, echo=TRUE}
+
+# Rarefaction curves
+Rcurve_data <- function(physeq, ntables=10, step=250,maxdepth = max(sample_sums(physeq)), methods=c("Observed","Chao1","ACE","Shannon"), seedstart=500, verbose=FALSE) {
+  require("vegan")
+  
+  # prep list of 
+  step.seq <- seq(from = 1, to = maxdepth, by = step)
+  
+  # Calculate alpha diversity
+  rare_tab <- lapply(step.seq,function(k) Calculate_alpha_div(physeq = physeq, ntables = ntables, depth = k, methods = methods, seedstart = seedstart, verbose = verbose))
+    
+  # Format table
+  rare_tab <- do.call(rbind, rare_tab)
+  
+  return(rare_tab)
+}
+
+# Calculate alpha diversity
+Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_sums(physeq))*0.9), methods=c("Observed","Chao1","ACE","Shannon"), seedstart=500, verbose=FALSE) {
+  require("vegan")
+  
+  # remove samples below depth
+  phy.use <- prune_samples(sample_sums(physeq) >= depth, physeq )
+  
+  # Orientate the OTU correctly
+  if (taxa_are_rows(phy.use)){otu.tab<-unclass(t(otu_table(phy.use)))} else otu.tab <- unclass(otu_table(phy.use))
+  
+  # Rarefaction function
+  rarefy <- function(x, depth) {
+    y <- sample(rep(1:length(x), x), depth)
+    y.tab <- table(y)
+    j <- numeric(length(x))
+    j[as.numeric(names(y.tab))] <- y.tab
+    j
+  }
+  
+  # Table to output alpha diversity table
+  Alpha_diversity = data.frame(row.names = row.names(otu.tab))
+  
+  for (i in seq(length(methods))){
+    Alpha_diversity[,methods[i]] <- numeric(length = nrow(otu.tab))
+    Alpha_diversity[,paste0(methods[i],"_sd")] <- numeric(length = nrow(otu.tab))
+  }
+  
+  # Run each sample separately
+  for (z in 1:nrow(otu.tab)) {
+    if (verbose==TRUE) {
+      print(paste("Rarefaction sample number", z, sep=" "))
+    }
+    numbers <- otu.tab[z,]
+    
+    # Rarefy the sample ntables times
+    set.seed(seedstart + z)
+    rare_tab <- lapply(1:ntables,function(k) rarefy(numbers,depth))
+    
+    # Format table
+    rare_tab <- do.call(rbind, rare_tab)
+    
+    # Calculate Observed richness, Chao1, and ACE.
+    adiv <- data.frame(t(estimateR(rare_tab)))
+    
+    if ("Observed" %in% methods){
+      # Save mean and sd of observed richness
+      Alpha_diversity$Observed[z] <- mean(adiv$S.obs)
+      Alpha_diversity$Observed_sd[z] <- sd(adiv$S.obs)
+    }
+    
+    if ("Chao1" %in% methods){
+      # Save mean and sd of observed richness
+      Alpha_diversity$Chao1[z] <- mean(adiv$S.chao1)
+      Alpha_diversity$Chao1_sd[z] <- sd(adiv$S.chao1)
+    }
+    
+    if ("ACE" %in% methods){
+      # Save mean and sd of observed richness
+      Alpha_diversity$ACE[z] <- mean(adiv$se.ACE)
+      Alpha_diversity$ACE_sd[z] <- sd(adiv$se.ACE)
+    }
+    
+    if ("Shannon" %in% methods){
+      # Calculate observed richness for each rep of sample z
+      adiv <- diversity(rare_tab, index = "shannon")
+      
+      # Save mean and sd of observed richness
+      Alpha_diversity$Shannon[z] <- mean(adiv)
+      Alpha_diversity$Shannon_sd[z] <- sd(adiv)
+    }
+    
+    if ("Simpson" %in% methods){
+      # Calculate observed richness for each rep of sample z
+      adiv <- diversity(rare_tab, index = "simpson")
+      # Save mean and sd of observed richness
+      Alpha_diversity$Simpson[z] <- mean(adiv)
+      Alpha_diversity$Simpson_sd[z] <- sd(adiv)
+    }
+    
+    if ("Evenness" %in% methods){
+      # Calculate observed richness for each rep of sample z
+      sha <- diversity(rare_tab, index = "shannon")
+      obs <- rowSums(rare_tab != 0)
+      adiv <- sha/log(obs)
+      # Save mean and sd of observed richness
+      Alpha_diversity$Evenness[z] <- mean(adiv)
+      Alpha_diversity$Evenness_sd[z] <- sd(adiv)
+    }
+    
+  }
+
+  # Add alpha diversity to sample data
+  output <- cbind(sample_data(phy.use),Alpha_diversity)
+  output$depth = depth
+  # Return physeq to the environment
+  return(output) 
+}
+
+# save functions
+save(Calculate_alpha_div, Rcurve_data, file = "scripts/adiv.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+### FILTER TAXA
+
+These functions are used to merge ASV that are not one of the most abundant, or below a defined threshold, into "Other"
+
+```{r merge_taxa_scripts, eval=TRUE, echo=TRUE}
+
+# This function merges anything not in the top (10 by default) most abundant ASVs
+merge_less_than_top <- function(pobject, top=10){
+  # transform to sample counts to relative values
+  transformed <- transform_sample_counts(pobject, function(x) x/sum(x))
+
+    # Orientate and export otu table
+  if (taxa_are_rows(transformed)) otu.table <- as.data.frame(otu_table(transformed)) else otu.table <- as.data.frame(t(otu_table(transformed)))
+  
+  # sort otu table by decreasing abundance
+  otu.sort <- otu.table[order(rowMeans(otu.table), decreasing = TRUE),]
+  
+  # Create list of ASVs to merge
+  otu.list <- row.names(otu.sort[(top+1):nrow(otu.sort),])
+  
+  # perform the merger with the original sample counts
+  merged <- merge_taxa(pobject, otu.list, 1)
+  
+  # change the taxa name
+  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Other"
+  
+  # change taxa to "Other" for all levels not being NAs
+  for (i in 1:ncol(tax_table(merged))){
+    if (sum(!is.na(tax_table(merged)[,i]))){
+      tax_table(merged)["Other",i] <- "Other"
+    }
+  }
+  return(merged)
+}
+
+# This function merges ASVs that are below a defined ratio, with the default being 0.001 (0.1%)
+merge_low_abundance <- function(pobject, threshold=0.001){
+  # transform to sample counts to relative values
+  transformed <- transform_sample_counts(pobject, function(x) x/sum(x))
+  
+  # Orientate and export otu table
+  if (taxa_are_rows(transformed)) otu.table <- as.data.frame(otu_table(transformed)) else otu.table <- as.data.frame(t(otu_table(transformed)))
+  
+  # Create list of ASVs to merge
+  otu.list <- row.names(otu.table[rowMeans(otu.table) < threshold,])
+
+  # perform the merger with the original sample counts
+  merged <- merge_taxa(pobject, otu.list, 1)
+  
+  # change the taxa name
+  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Other"
+  
+  # change taxa to "Other" for all levels not being NAs
+  for (i in 1:ncol(tax_table(merged))){
+    if (sum(!is.na(tax_table(merged)[,i]))){
+      tax_table(merged)["Other",i] <- "Other"
+    }
+  }
+  return(merged)
+}
+
+merge_prevalence <- function(pobject, variable, min.samples){
+  # transform to sample counts to relative values
+  if (taxa_are_rows(transformed)) otu.table <- as.data.frame(otu_table(transformed)) else otu.table <- as.data.frame(t(otu_table(transformed)))
+  
+  # make binary
+  otu.table[otu.table != 0] <- 1
+  
+  # extract metadata
+  dat <- data.frame(sample_data(pobject))
+  
+  # set groups
+  vgroup <- unique(dat[,variable])
+  
+  # create count table
+  counts <- data.frame(row.names = row.names(otu.table))
+  for (seq(length(vgroup))) counts[,vgroup[i]] <- rowSums(otu.table[,dat[,variable]==vgroup[i]])
+  
+  counts$keep <- ifelse
+  
+    # Orientate and export otu table
+  if (taxa_are_rows(transformed)) otu.table <- as.data.frame(otu_table(transformed)) else otu.table <- as.data.frame(t(otu_table(transformed)))otu_all <- 
+  
+}
+# save functions
+save(merge_less_than_top, merge_low_abundance, file = "scripts/merge_abundance.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+# IMPORT AND QC
+
+This section will import the ASV data, add metadata, and run decontam
+
+## PIPELINE DATA
+
+First step is to load the output from the pipeline. The only part of this section that should be edited is the "grepl" commands to ensure that negative controls and mock samples are properly identified
+
+```{r Load_pipeline_data, eval = TRUE}
+# Load analysis data
+load(params$input)
+
+# Create sample ID variable and use it as sample_names
+sample_data(phy)$ID <- with(sample_data(phy), paste(Run,Sample, sep = "_"))
+sample_names(phy) <- sample_data(phy)$ID
+
+# Create variables identifying negative controls. If negative controls are named differently update this option, "|" can be used to list more options
+sample_data(phy)$is.neg <- grepl(params$neg,sample_data(phy)$Sample,ignore.case = TRUE)
+
+# Create variables identifying sample types.Remember to update if Mock samples samples are named differently
+sample_data(phy)$type <- ifelse(sample_data(phy)$is.neg, "Control",
+                                ifelse(grepl("Mock",sample_data(phy)$Sample, 
+                                             ignore.case = TRUE), "Mock","Sample"))
+
+# Create backup of the original dataset
+phy.org <- phy
+
+```
+
+Next step is to load the metadata for the project. This step will have to be edited to fit the files and names used.
+
+```{r Load_meta_data_a, eval = TRUE}
+# export sample data
+tmp <- data.frame(sample_data(phy))
+
+# Load metadata - This part will be specific to the project
+meta <- read.csv(params$meta, header = T)
+
+# Create an identical ID variable to use for merging
+meta$ID <- with(meta, paste(Run,Sample_ID, sep = "_"))
+
+# Verify that all the IDs are identical between the datasets
+nrow(tmp[!tmp$ID %in% meta$ID,])
+tmp[!tmp$ID %in% meta$ID,]
+nrow(meta[!meta$ID %in% tmp$ID,])
+
+# Check which, if any columns, are in both tables
+colnames(tmp)[colnames(tmp) %in% colnames(meta)]
+```
+
+```{r Load_meta_data_b, eval = TRUE}
+# If any other columns than ID is in both, consider if you want it removed
+meta$Run <- NULL
+meta$reads <- NULL
+meta$ASVs <- NULL
+meta$is.neg <- NULL
+meta$type <- NULL
+
+# When you are sure that all match, then merge and add to phyloseq
+mtmp <- merge(tmp,meta,by="ID")
+row.names(mtmp) <- mtmp$ID
+
+# Add the merged data to the phyloseq object
+sample_data(phy) <- mtmp
+
+# Save the phyloseq object
+save(phy.org, phy, file="R_objects/input.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+## CLEAN TAXA
+
+Many ASVs lacks species level, or higher, classification. Later steps will use the taxonomic annotation at various levels and some will remove taxa without classification. To avoid data being removed it is necessary to replace missing values with relevant information, this will be the highest available classification. At the same time, ASVs that could not be classified to Phylum or even Kingdom level is likely to be sequencing artifacts and will be removed. For some analyses it might be relevant to only include taxa that has been properly classified, so the level at which unclassified taxa are removed can be modified.
+
+```{r Clean_taxa, eval = FALSE}
+################################################################################
+# load data 
+load("R_objects/input.Rdata")
+
+# Load function
+load("scripts/clean_tax.Rdata")
+
+# Clean phyloseq object
+phy <- clean_taxa(phy, tax_remove = "Phylum", verbose = TRUE)
+
+# Save cleaned phyloseq object
+save(phy.org, phy, file="R_objects/cleaned.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+## DECONTAMINATE {.tabset .tabset-fade .tabset-pills}
+
+This section runs decontam to remove likely contaminants from the data set [@decontam]. The decontamination should be performed as harshly as makes sense for each specific project, but I suggest using the percent of reads removed as an indicator of what harshness is appropriate. If the project contains samples from multiple batches or runs this information should be included using the "batch" variable. How the contaminants from each batch is combined is defined using the variable "batch.combine": - "minimum" = The minimum batch probabilities is used to identify contaminants - "product" = The product of the batch probabilities is used to identify contaminants - "fisher" = The batch probabilities are combined with Fishers method and used to identify contaminants Decontam can identify contaminants based on the initial DNA concentration (frequency) and/or based on prevalence in samples and controls. Frequency based decontam assumes a negative correlation between DNA concentration and contaminant abundance. Prevalence based decontam assumes higher abundance of contaminants in controls. As for batches, the two methods can be used separately or combined. The variable "method" defines how decontam will run.
+
+### SINGLE SETTING
+
+Use this option if: - Either initial DNA concentration OR negative controls variable is available in the sample metadata AND - The samples have been processed and sequenced in one batch
+
+```{r Decontam_single, eval = FALSE}
+################################################################################
+# load data 
+load("R_objects/cleaned.Rdata")
+df <- data.frame(sample_data(phy))
+
+
+### If using frequency based method
+df <- df[order(df$DNA_Conc),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=DNA_Conc, color=type)) + geom_point()
+ggsave("plots/sequencing_depth.pdf")
+
+# Set any sample with DNA below detection limit (or neg PCR controls) to half the lowest measured value
+sample_data(phy)$DNA_Conc[sample_data(phy)$DNA_Conc == 0] <- min(sample_data(phy)$DNA_Conc[sample_data(phy)$DNA_Conc != 0])/2
+
+# Identify contaminants
+contamdf <- isContaminant(phy, method="frequency", conc="DNA_Conc")
+table(contamdf$contaminant)
+
+### If using prevalence based method
+
+# Compare sequencing depth to sample type 
+df <- data.frame(sample_data(phy))
+df <- df[order(df$reads),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=reads, color=type)) + geom_point()
+suppressMessages(ggsave("plots/sequencing_depth.pdf"))
+
+# use prevalence method to decontam
+contamdf <- isContaminant(phy, method="prevalence", neg="is.neg")
+table(contamdf$contaminant)
+
+################################################################################
+# plot presence Abundance of contaminants
+ps.prc <- transform_sample_counts(phy, function(x) 100*x/sum(x))
+prc.melt <- psmelt(ps.prc)
+
+prc.melt$contaminant <- prc.melt$OTU %in% row.names(contamdf)[contamdf$contaminant]
+contam.prc <- aggregate(Abundance~Sample+type+contaminant, data = prc.melt, FUN = sum)
+
+ggplot(contam.prc[contam.prc$contaminant,], aes(x = type, y = Abundance)) + geom_boxplot()
+suppressMessages(ggsave("plots/contaminant_fraction_single.pdf"))
+
+aggregate(Abundance~type+contaminant, data = contam.prc, FUN = mean)
+
+# Create and store table of taxa and their abundance
+tax.df <- aggregate(Abundance ~ OTU+Phylum+Class+Order+Family+Genus+Species+type+contaminant, data = prc.melt, FUN = mean)
+tmp <- reshape2::dcast(tax.df,formula = Phylum+Class+Order+Family+Genus+Species+OTU+contaminant~type, value.var = "Abundance")
+
+write.table(tmp, file = "tables/contaminant_taxa.tsv", row.names = F,quote = F, sep = "\t",col.names = T)
+
+# Evaluate what you can agree to loose, I will use the default
+phy <- prune_taxa(row.names(contamdf)[!contamdf$contaminant], phy)
+
+# Filter ASVs with less than 5 reads
+phy <- prune_taxa(taxa_sums(phy) >= 5,phy)
+
+# Plot depth v type again
+df <- data.frame(sample_data(phy))
+df$depth <- sample_sums(phy)
+df <- df[order(df$depth),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=depth, color=type)) + geom_point()
+
+# save the cleaned phyloseq object
+save(phy, file="R_objects/Decontam.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+Cleaned phyloseq object saved in: "R_objects/Decontam.Rdata"
+
+### MULTIPLE SETTINGS
+
+Use this option if: - The initial DNA concentration AND negative controls variable is available in the sample metadata OR - The samples have been extracted and/or sequenced in multiple batches/runs (if samples has been processed in multiple batches, each with their own controls, this can be set as batches as well)
+
+> The included code is for both types of decontam and batches, delete lines as needed THIS SECTION MIGHT FAIL WHILE KNITTING (MEMORY INTENSIVE)
+
+```{r decontam_multiple, eval = FALSE}
+# load data 
+load("R_objects/cleaned.Rdata")
+
+# Compare sequencing depth to sample type 
+df <- data.frame(sample_data(phy))
+df <- df[order(df$reads),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=reads, color=type)) + geom_point()
+suppressMessages(ggsave("plots/sequencing_depth.pdf"))
+
+# Prep table for output
+contam.df <- data.frame(row.names = taxa_names(phy))
+
+# Set any sample with DNA below detection limit (or neg PCR controls) to half the lowest measured value
+sample_data(phy)$quant_reading <- ifelse(sample_data(phy)$DNA_Conc == 0, min(sample_data(phy)$DNA_Conc[sample_data(phy)$DNA_Conc != 0])/2, sample_data(phy)$DNA_Conc)
+
+# Both methods, no batches
+contam.df$Prev.none <- isContaminant(phy, method="prevalence", neg="is.neg", detailed = FALSE)
+contam.df$Freq.none <- isContaminant(phy, method="frequency", conc="quant_reading", detailed = FALSE)
+contam.df$combined.none <- isContaminant(phy, method="combined", neg="is.neg", conc="quant_reading", detailed = FALSE)
+contam.df$minimum.none <- isContaminant(phy, method="minimum", neg="is.neg", conc="quant_reading", detailed = FALSE)
+
+# Both methods, Batch minimum
+contam.df$Prev.minimum <- isContaminant(phy, method="prevalence", neg="is.neg", detailed = FALSE, batch = "Run", batch.combine = "minimum")
+contam.df$Freq.minimum <- isContaminant(phy, method="frequency", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "minimum")
+contam.df$combined.minimum <- isContaminant(phy, method="combined", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "minimum")
+contam.df$minimum.minimum <- isContaminant(phy, method="minimum", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "minimum")
+
+# Both methods, Batch product
+contam.df$Prev.product <- isContaminant(phy, method="prevalence", neg="is.neg", detailed = FALSE, batch = "Run", batch.combine = "product")
+contam.df$Freq.product <- isContaminant(phy, method="frequency", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "product")
+contam.df$combined.product <- isContaminant(phy, method="combined", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "product")
+contam.df$minimum.product <- isContaminant(phy, method="minimum", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "product")
+
+# Both methods, Batch minimum
+contam.df$Prev.fisher <- isContaminant(phy, method="prevalence", neg="is.neg", detailed = FALSE, batch = "Run", batch.combine = "fisher")
+contam.df$Freq.fisher <- isContaminant(phy, method="frequency", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "fisher")
+contam.df$combined.fisher <- isContaminant(phy, method="combined", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "fisher")
+contam.df$minimum.fisher <- isContaminant(phy, method="minimum", neg="is.neg", conc="quant_reading", detailed = FALSE, batch = "Run", batch.combine = "fisher")
+
+# decontam summary
+contam.df$ASV <- row.names(contam.df)
+contam.long <- reshape2::melt(contam.df, id.vars = "ASV",variable.name = "Method",value.name = "Contaminant")
+with(contam.long, table(Method,Contaminant))
+
+# Merge with sample data
+ps.prc <- transform_sample_counts(phy, function(x) 100*x/sum(x))
+prc.melt <- psmelt(ps.prc)
+prc.m <- merge(prc.melt, contam.long, by.y = "ASV", by.x = "OTU", all = TRUE)
+
+# Aggregate and plot
+prc.agg <- aggregate(Abundance ~ Sample+type+Method+Contaminant, data = prc.m, FUN = sum)
+decontam.plot <- ggplot(prc.agg[prc.agg$Contaminant,], aes(x = type, y = Abundance,color = Method)) +
+  geom_boxplot()  +
+  scale_color_manual(values=unname(pals::polychrome(n=length(unique(prc.agg$Method)))))
+suppressMessages(ggsave(decontam.plot,"plots/contaminant_fraction_multiple.pdf"))
+
+```
+
+```{r Decontam_plot, eval=TRUE,echo=TRUE,fig.cap="Abundance of ASVs classified as contaminants"}
+
+# output plot 
+knitr::include_graphics("plots/contaminant_fraction_multiple.pdf")
+
+```
+
+```{r Mock_plot, eval=TRUE,echo=TRUE,fig.cap="Comparison of sequenced mock communities"}
+
+# output plot 
+knitr::include_graphics("plots/mock_comparison.pdf")
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+# Evaluate what you can agree to loose and then use that column. I will use the minimum.minimum
+phy.harsh <- prune_taxa(contam.df$ASV[contam.df$combined.product == FALSE], phy)
+phy <- prune_taxa(contam.df$ASV[contam.df$minimum.minimum == FALSE], phy)
+
+# Filter ASVs with less than 5 reads
+phy <- prune_taxa(taxa_sums(phy) >= 5,phy)
+phy.harsh <- prune_taxa(taxa_sums(phy.harsh) >= 5,phy.harsh)
+
+# Plot depth v type again
+df <- data.frame(sample_data(phy))
+df$depth <- sample_sums(phy)
+df <- df[order(df$depth),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=depth, color=type)) + geom_point() + 
+  facet_wrap("Run", nrow = 1)
+
+# Remove samples with few reads and filter taxa again
+phy <- prune_samples(sample_sums(phy) > 5000, phy)
+
+phy.harsh <- prune_samples(sample_sums(phy.harsh) > 5000, phy.harsh)
+phy.harsh <- prune_taxa(taxa_sums(phy.harsh) >= 5,phy.harsh)
+
+# save the cleaned phyloseq object (extra objects, like harsh can be included as needed)
+save(phy, phy.harsh, file="R_objects/Decontam.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+Cleaned phyloseq object saved in: "R_objects/Decontam.Rdata"
+
+## TEST MOCK
+
+Here we test how the mock community looks compared to the expected abundance. While there might be some differences from the expected mock community, the important part is that mock communities are consistent across runs.
+
+```{r Mock, eval = TRUE}
+# load data
+load("R_objects/Decontam.Rdata")
+# Subset mocks
+mocks <- subset_samples(phy, type == "Mock")
+mocks <- prune_taxa(taxa_sums(mocks) >= 5, mocks)
+
+# Control for depth of mocks
+table(sample_sums(mocks))
+
+# All fine, so transform to percentages
+mocks.prc <- transform_sample_counts(mocks,fun = function(x) x*100/sum(x))
+
+# Define original mock
+mock.org <- data.frame(Sample = "Original",Abundance = 5, Family_clean = c("Moraxellaceae", "Actinomycetaceae", "Bacillaceae_1", "Bacteroidaceae", "Clostridiaceae_1", "Deinococcaceae", "Enterococcaceae", "Enterobacteriaceae", "Helicobacteraceae", "Lactobacillaceae", "Listeriaceae", "Neisseriaceae", "Propionibacteriaceae", "Pseudomonadaceae", "Rhodobacteraceae", "Staphylococcaceae", "Staphylococcaceae", "Streptococcaceae", "Streptococcaceae", "Streptococcaceae"))
+
+# Define anything not matching orginal mock families as NA
+mock <- psmelt(mocks.prc)
+mock <- mock[mock$Abundance > 0,]
+mock$Family_clean <- ifelse(mock$Family %in% mock.org$Family_clean, mock$Family, NA)
+
+# melt mocks
+mock.clean <- mock[,c("Sample","Abundance","Family_clean")]
+mock.clean <- rbind(mock.clean,mock.org)
+
+# Create plots
+mock.plot <- ggplot(mock.clean[!grepl("94",mock.clean$Sample),], aes(Sample, Abundance, fill = Family_clean, color = Family_clean)) + 
+  geom_col(position = "fill") + coord_flip() +
+  scale_fill_manual(values=unname(pals::polychrome(n=length(unique(mock.clean$Family_clean))))) + 
+  scale_color_manual(values=unname(pals::polychrome(n=length(unique(mock.clean$Family_clean)))))
+suppressMessages(ggsave(mock.plot, "plots/test_mock_comparison.pdf"))
+
+```
+
+```{r Mock_plot, eval=TRUE,echo=TRUE,fig.cap="Comparison of sequenced mock communities"}
+
+# output plot 
+knitr::include_graphics("plots/mock_comparison.pdf")
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+Mock looks fine
+
+## CLEAN BY METADATA
+
+After using decontaminate it is time to evaluate the samples based on the metadata and remove unwanted samples
+
+```{r clean_meta, eval=TRUE, echo=TRUE}
+# load data
+load("R_objects/Decontam.Rdata")
+
+# Evaluate relevant variables
+with(sample_data(phy), table(Week_clean,Trustworthy))
+
+# Remove relevant samples and prune taxa
+phy <- subset_samples(phy, Trustworthy == TRUE)
+phy <- prune_samples(!is.na(sample_data(phy)$Week_clean), phy)
+phy <- prune_taxa(taxa_sums(phy) >=1,phy)
+# save the cleaned phyloseq object
+save(phy, phy.harsh, file="R_objects/Phyloseq.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+```
+
+You have now completed data import and initial cleaning of the data. The data stored in "R_objects/Phyloseq.Rdata" can be used as backup later.
+
+# ALPHA DIVERSITY
+
+Alpha diversity, also called "within sample diversity" is calculated for each sample individually and is independent of all other samples. Alpha diversity is sensitive to sequencing depth, so rarefaction must be done first.
+
+## CALCULATE ALPHA DIVERSITY {.tabset .tabset-fade .tabset-pills}
+
+There is randomness involved in performing rarefaction (random subsampling). To minimize any effect of this randomness it is recommended to use the mean of multiple rarefactions instead of just relying on just one random subsampling. The rarefaction process is split into three steps: Calculating rarefaction curve data, plotting rarefaction curves, and performing the actual rarefaction
+
+### CALCULATE DATA FOR RAREFACTION CURVES
+
+As this is used to assess the sequencing depth to use for the actual rarefaction fewer rarefactions is acceptable. Default maxdepth is set to the highest sequencing depth, but a lower value can be set. Here I will use the quantile function to look at the distribution of sequencing depths and then set it at the 90th quantile
+
+```{r rare_curve_calc, eval = FALSE}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("scripts/adiv.Rdata")
+
+# Set alpha diversity indexes to use
+R.methods <- c("Observed", "Chao1", "Shannon", "ACE")
+
+# Look at distribution of sequencing depths
+quantile(sample_sums(phy),probs = seq(0,1,0.1))
+
+# Set max depth to the 90th quantile
+mdepth <- round(unname(quantile(sample_sums(phy),0.9)))
+
+# calculate rarefaction data
+Rdat <- Rcurve_data(phy, methods = R.methods, maxdepth = mdepth)
+
+# melt data table
+Rdat.m <- reshape2::melt(data = Rdat, id.vars = c(sample_variables(phy), "depth"),measure.vars = R.methods,variable.name = "Index", value.name = "Alpha_diversity")
+Rdat.m$Alpha_diversity[Rdat.m$Alpha_diversity == "NaN"] <- 1
+
+# save Rdat
+save(Rdat.m, file = "R_objects/Rare_dat.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+### PLOT RAREFACTION CURVES
+
+The rarefaction curves can be plottet for each sample by some other variable. Remember that the mock samples are expected to be very different. Also when grouping by other than sample there might be large changes when passing the actual sequencing depth of individual samples.
+
+```{r rare_curve_plot, eval = FALSE, echo = TRUE}
+# Load data
+load("R_objects/Rare_dat.RData")
+
+# plot per sample
+ggplot(Rdat.m, aes(x = depth, y = Alpha_diversity, color = Run)) + 
+  geom_smooth(aes(group = Sample), se = FALSE) + 
+  facet_wrap("Index", scales = "free") + 
+  #scale_x_log10() + 
+  theme_pubclean()
+suppressMessages(ggsave("plots/Rcurve_individual.pdf"))
+
+Rdat.m$Run_type <- with(Rdat.m, paste(Run, type, sep = "_"))
+
+# plot per run and sample type
+ggplot(Rdat.m, aes(x = depth, y = Alpha_diversity, color = Run_type)) + 
+  geom_smooth(aes(group = Run_type), method = "loess", formula = y ~ x, se = FALSE) + 
+  facet_wrap("Index", scales = "free") + 
+  #scale_x_log10() + 
+  geom_vline(color = "red",xintercept = 12000) + 
+  theme_pubclean() + scale_color_brewer(palette = "Paired")
+suppressMessages(ggsave("plots/Rcurve_grouped.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+```{r plot_rare_curve_individual, eval = TRUE, echo = TRUE, fig.cap="Rarefaction curves for individual samples"}
+# include plot
+
+knitr::include_graphics("plots/Rcurve_individual.pdf")
+
+```
+
+```{r plot_rare_curve_individual, eval = TRUE, echo = TRUE, fig.cap="Averaged rarefaction curves for each group"}
+# include plot
+
+knitr::include_graphics("plots/Rcurve_grouped.pdf")
+
+```
+
+### CALCULATE RAREFIED ALPHA DIVERSITIES
+
+Based on the rarefaction curves, I will remove samples with less than 10,000 reads before rarefaction. Not rarefying a sample can also create a bias, so to avoid this I will rarefy all samples to 90% of the lowest sample depth (default setting). As this will be done for just one sequencing depth and we need the results to be consistent default setting is to rarefy 100 times. The function will produce a data.frame with sample metadata and the mean and standard deviation for each sample using the methods set prior.
+
+```{r alpha_div_calc, eval=TRUE}
+# load data
+load("R_objects/Phyloseq.Rdata")
+load("scripts/adiv.Rdata")
+
+# Set alpha diversity indexes to use
+R.methods <- c("Observed", "Chao1", "Shannon", "ACE")
+
+# remove samples based on rarefaction curves
+phy <- prune_samples(sample_sums(phy) > 10000, phy)
+
+# Calculate data
+adat <- Calculate_alpha_div(phy, methods = R.methods)
+
+# Create a data.frame with and without mock samples
+adat.wm <- adat
+adat <- adat[adat$type == "Sample",]
+
+# Save the phyloseq object
+save(adat, adat.wm, R.methods, file="R_objects/AlphaDiversity.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+## BATCH EFFECTS
+
+Before testing any of the project specific variables it is important to determine if there is any batch effects that affect the samples (for example extraction batches or sequencing run)
+
+```{r alpha_div_batch, eval=TRUE}
+# Load data
+load("R_objects/AlphaDiversity.RData")
+
+### Test observed richness
+# Run statistical test of batch effect
+compare_means(Observed ~ Run,  data = adat, method = "kruskal")
+
+## If significant:
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Observed ~ Run) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Run") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Format for 
+stat.sig <- stat.test[stat.test$p.adj.signif !="ns",] %>%
+  add_y_position(step.increase = 0.25) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Run", y = "Observed",
+          color = "Run", palette = "jco",
+          add = "jitter")
+
+p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+
+### Test shannon diversity index
+# Run statistical test of batch effect
+compare_means(Shannon ~ Run,  data = adat, method = "kruskal")
+
+## If significant:
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Shannon ~ Run) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Run") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Format for 
+stat.sig <- stat.test[stat.test$p.adj.signif !="ns",] %>%
+  add_y_position(step.increase = 0.25) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Run", y = "Shannon", color = "Run", palette = "jco", add = "jitter")
+
+p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+# If there is a significant batch effect, then it will be necessary to correct following tests for this effect.
+
+ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,legend = "bottom")
+suppressMessages(ggsave("plots/adiv_batch.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+## PROJECT EFFECTS {.tabset .tabset-fade .tabset-pills}
+
+Keeping in mind possible batch effects, now we can test for project effects. Depending on the project it might be best to test each variable individually or to perform a nested test of the variables.
+
+### WEEK (INDIVIDUAL)
+
+Here is code to test alpha diversity for a single variable.
+
+```{r alpha_div_Week, eval=TRUE}
+# Load data
+load("R_objects/AlphaDiversity.RData")
+
+# Remove samples with incomplete metadata
+adat <- adat[!is.na(adat$Week_clean),]
+adat$Week_factor <- as.factor(adat$Week_clean)
+
+### Determine if any batch effect might influence your data
+# Calculate distribution counts
+freq.t <- with(adat, table(Run, Week_clean, exclude = NULL))
+freq.t
+
+# Determine distribution percentages
+prop.table(freq.t,2)*100
+
+# Test if any difference is significant (if not significant the batch effect should be negligible)
+chisq_test(freq.t)
+
+################################################################################
+
+#### Test project variable
+### Observed richness
+compare_means(Observed ~ Week_factor,  data = adat, method = "kruskal")
+
+ggplot(adat[adat$Trustworthy,], aes(x = as.factor(Week_clean), y = Observed, color = as.factor(Week_clean))) + geom_violin() + geom_jitter()
+
+## If significant
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Observed ~ Week_factor) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Week_factor") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Subset significant comparisons and calculate position on y scale
+stat.sig <- stat.test[stat.test$p.adj.signif !="ns",] %>%
+  add_y_position(step.increase = 0.33) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Week_factor", y = "Observed",
+          color = "Week_factor", palette = "jco",
+          add = "jitter")
+
+p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+
+### Test Shannon diversity index
+# Run statistical test of batch effect
+compare_means(Shannon ~ Week_factor,  data = adat, method = "kruskal")
+
+## If significant
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Shannon ~ Week_factor) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Week_factor") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Format for 
+stat.sig <- stat.test[stat.test$p.adj.signif !="ns",] %>%
+  add_y_position(step.increase = 0.33,) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Week_factor", y = "Shannon",
+          color = "Week_factor", palette = "jco",
+          add = "jitter")
+
+p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+
+### Create output plot
+ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,legend = "bottom")
+suppressMessages(ggsave("plots/adiv_Week.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### OUTCOME (INDIVIDUAL)
+
+Here is code to test alpha diversity for a single variable.
+
+```{r alpha_div_Outcome, eval=TRUE}
+# Load data
+load("R_objects/AlphaDiversity.RData")
+
+# Remove samples with incomplete metadata
+adat <- adat[!is.na(adat$Outcome2),]
+
+### Determine if any batch effect might influence your data
+# Calculate distribution counts
+freq.t <- with(adat, table(Run, Outcome2, exclude = NULL))
+freq.t
+
+# Determine distribution percentages
+prop.table(freq.t,2)*100
+
+# Test if any difference is significant (if not significant the batch effect should be negligible)
+chisq_test(freq.t)
+
+################################################################################
+
+#### Test project variable
+### Observed richness
+compare_means(Observed ~ Outcome2,  data = adat, method = "kruskal")
+
+ggplot(adat, aes(x = Outcome2, y = Observed, color = Outcome2)) + geom_violin() + geom_jitter()
+
+## If significant
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Observed ~ Outcome2) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Outcome2") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Subset significant comparisons and calculate position on y scale
+stat.sig <- stat.test %>%
+  add_y_position(step.increase = 0.33) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Outcome2", y = "Observed",
+          color = "Outcome2", palette = "jco",
+          add = "jitter")
+
+p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+
+### Test Shannon diversity index
+# Run statistical test of batch effect
+compare_means(Shannon ~ Outcome2,  data = adat, method = "kruskal")
+
+## If significant
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  wilcox_test(Shannon ~ Outcome2) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_x_position(x = "Outcome2") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Format for 
+stat.sig <- stat.test %>%
+  add_y_position(step.increase = 0.33,) %>%
+  mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+
+# Create plot
+p <- ggboxplot(adat, x = "Outcome2", y = "Shannon",
+          color = "Outcome2", palette = "jco",
+          add = "jitter")
+
+p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
+
+### Create output plot
+ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,legend = "bottom")
+suppressMessages(ggsave("plots/adiv_outcome.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### WEEK AND OUTCOME (NESTED)
+
+```{r adiv_nested, eval = FALSE}
+# Load data
+load("R_objects/AlphaDiversity.RData")
+
+# Remove samples with incomplete metadata
+adat <- adat[!is.na(adat$Outcome2),]
+adat$Week_factor <- as.factor(adat$Week_clean)
+
+#### Test project variable
+### Observed richness
+fit <- aov(Observed ~ Week_factor+Outcome2, data = adat)
+anova(fit)
+TukeyHSD(fit)
+
+## Calculate stats for inner variable
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  group_by(Week_factor) %>%
+  wilcox_test(Observed ~ Outcome2) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "Week_factor", dodge = 0.8) %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+## Calculate stats for outer variable
+# Perform pairwise comparisons
+stat.test2 <- adat %>%
+  wilcox_test(Observed ~ Week_factor) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "Week_factor") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Adjust y value for outer p-values
+stat.test2$y.position <- max(stat.test$y.position)*1.1
+
+# Create plot
+p <- ggboxplot(adat, x = "Week_factor", y = "Observed",
+          color = "Outcome2", palette = "jco",
+          add = "jitter")
+
+# Add p-values
+p.obs <- p + stat_pvalue_manual(stat.test, label = "p.adj.format",tip.length = 0)
+p.obs <- p.obs + stat_pvalue_manual(stat.test2, label = "p.adj.format",tip.length = 0.02, step.increase = 0.1)
+
+### Shannon diversity index
+fit <- aov(Shannon ~ Week_factor+Outcome2, data = adat)
+anova(fit)
+TukeyHSD(fit)
+
+## Calculate stats for inner variable
+# Perform pairwise comparisons
+stat.test <- adat %>%
+  group_by(Week_factor) %>%
+  wilcox_test(Shannon ~ Outcome2) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "Week_factor", dodge = 0.8) %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+## Calculate stats for outer variable
+# Perform pairwise comparisons
+stat.test2 <- adat %>%
+  wilcox_test(Shannon ~ Week_factor) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "Week_factor") %>%
+  p_format("p.adj", accuracy = 0.0001, trailing.zero = TRUE, new.col = TRUE)
+
+# Adjust y value for outer p-values
+stat.test2$y.position <- max(stat.test$y.position)*1.1
+
+# Create plot
+p <- ggboxplot(adat, x = "Week_factor", y = "Shannon",
+          color = "Outcome2", palette = "jco",
+          add = "jitter")
+
+# Add p-values
+p.sha <- p + stat_pvalue_manual(stat.test, label = "p.adj.format",tip.length = 0)
+p.sha <- p.sha + stat_pvalue_manual(stat.test2, label = "p.adj.format",tip.length = 0.02, step.increase = 0.1)
+
+### Create output plot
+ggarrange(p.obs,p.sha, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,legend = "bottom")
+suppressMessages(ggsave("plots/adiv_outcome_week.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+
+```
+
+# BETA DIVERSITY
+
+Beta diversity, also called "between sample diversity" is a measurement of the distance, or difference, between samples. First step will be to calculate the beta diversity, second to identify batch effects, and lastly to determine project effects
+
+## CALCULATE BETA DIVERSITY {.tabset .tabset-fade .tabset-pills}
+
+I will calculate for both weighted UniFrac distances and Bray-Curtis dissimilarity index. Both indeces normalises pairwise distances/dissimilarities to be between 0 and 1, which means that while the distance between two samples will always be the same, the numerical value will depend on all the samples analysed together. Other metrics/indeces can be used, and might be relevant, but just keep in mind how the specific indeces are relevant for the interpretation of the following results.
+
+### UNIFRAC
+
+The unique fraction metric, or UniFrac, measures the phylogenetic distance between sets of taxa in a phylogenetic tree as the fraction of the branch length of the tree that leads to descendants from either one environment or the other, but not both [(Lozupone & Knight, 2005)](https://doi.org/10.1128/AEM.71.12.8228-8235.2005). Weighted UniFrac takes the abundance of each ASV into account instead of just presence/absence, which means that it will not be sensitive to sequencing depth. The UniFrac algorithm requires a rooted tree, so if ASVs has been removed from the raw da the tree should be rerooted manually, else a random ASV will be chosen as root.
+
+```{r calc_WUniFrac, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+
+# Root tree if necessary
+if (!is.rooted(phy_tree(phy))) phy_tree(phy) <- ape::root(phy_tree(phy), sample(taxa_names(phy), 1), resolve.root = TRUE)
+
+# Calculate UniFrac distances
+wuf.dist <- UniFrac(phy, weighted = TRUE, parallel = FALSE)
+
+# Calculate PCoA data
+wuf.pcoa <- ordinate(phy, method = "PCoA",distance = wuf.dist)
+wuf.nmds <- metaMDS(wuf.dist, k = 5, trymax = 100)
+
+# Save distance objects
+save(wuf.dist, wuf.nmds, wuf.pcoa, file = "R_objects/WUF.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### BRAY-CURTIS
+
+Bray-Curtis dissimilarity index (as implemented by the vegan package) is the sum of abundance difference for each species/ASV, divided by theoretical maximum difference between the samples if no ASV overlapped. The formula used is: $$d_{jk} = \frac{\sum|n_{ij}-n_{ik}|}{\sum(n_{ij}+n_{ik})}$$ Bray-Curtis dissimilarity is not a true distance metric as it does not adhere to the [triangle inequality](), but is often used to compare microbiomes. Bray-Curtis dissimilarities are based on the assumption that measurements are taken from equal areas, so differences in total counts between samples will bias the metric. As differences in sequences depth is due to differences in the lab procedures and not biological differences, we should transform our counts to relative abundances before calculating Bray-Curtis dissimilarities.
+
+```{r calc_bray, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+
+# transform counts
+phy.ra <- transform_sample_counts(phy, function(x) x/sum(x))
+
+# Calculate Bray-Curtis dissimilarities
+bray.dist <- distance(phy.ra, method = "bray",)
+
+# Calculate PCoA data
+bray.pcoa <- ordinate(phy, method = "PCoA",distance = bray.dist)
+bray.nmds <- metaMDS(bray.dist, k = 5, trymax = 100)
+
+# Save distance objects
+save(bray.dist, bray.nmds, bray.pcoa, file = "R_objects/Bray.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+## RUN STATISTICAL ANALYSES
+
+For the betadiversity we will also have to test for batch effects, and if they are significant, correct for them when performing the project relevant analyses
+
+### BATCH EFFECTS {.tabset .tabset-fade .tabset-pills}
+
+I will test each diversity index individually, so if additional indeces have been included, just copy and and adapt the following sections
+
+#### WEIGHTED UNIFRAC
+
+```{r batch_WUF, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/WUF.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+
+# Run PERMANOVA for batch variable
+batch.PERM <- adonis2(wuf.dist ~ as.factor(Batch)*Run, data = mdat)
+
+# Compare the betadiversity dispertion for the batch variable
+batch.bdisp <- betadisper(wuf.dist, mdat$Batch)
+anova(batch.bdisp)
+TukeyHSD(batch.bdisp)
+
+plot(batch.bdisp)
+boxplot(batch.bdisp)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+#### BRAY-CURTIS
+
+```{r batch_Bray, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Bray.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+
+# Run PERMANOVA for batch variable
+batch.PERM <- adonis2(bray.dist ~ as.factor(Batch)*Run, data = mdat)
+
+# Compare the betadiversity dispertion for the batch variable
+batch.bdisp <- betadisper(bray.dist, mdat$Run)
+anova(batch.bdisp)
+TukeyHSD(batch.bdisp)
+
+plot(batch.bdisp)
+boxplot(batch.bdisp)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+#### INTERPRETATION
+
+There were no overall differences based on weighted UniFrac, but there were differences based on Bray-Curtis. This seem to be driven by a lower betadiversity dispertion of plate 4, especially batch 13, compared to the other sequencing runs. Due to the well randomised setup I do not worry about this for the current dataset and will ignore any batch effects on the betadirsity. If the effect is significant, then include the relevant variable in all following analyses.
+
+### PROJECT EFFECTS {.tabset .tabset-fade .tabset-pills}
+
+I will run the same tests as above (adonis2 and betadisper), but this time I will run for both indeces together
+
+#### WEEK
+
+```{r beta_week, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/WUF.RData")
+load("R_objects/Bray.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+mdat$Week_factor <- as.factor(mdat$Week_clean)
+
+# Compare the betadiversity dispertion for Weighted UniFrac
+wuf.bdisp <- betadisper(wuf.dist, mdat$Week_clean, bias.adjust=TRUE)
+anova(wuf.bdisp)
+plot(wuf.bdisp)
+
+# dispertion by group
+boxplot(wuf.bdisp)
+
+# Test which groups differ (only if the anova test was significant)
+(wuf.HSD <- TukeyHSD(wuf.bdisp))
+plot(wuf.HSD)
+
+# Compare the betadiversity dispertion for Weighted UniFrac
+bray.bdisp <- betadisper(bray.dist, mdat$Week_clean, bias.adjust=TRUE)
+anova(bray.bdisp)
+plot(bray.bdisp)
+
+# dispertion by group
+boxplot(bray.bdisp)
+
+# Test which groups differ (only if the anova test was significant)
+(bray.HSD <- TukeyHSD(bray.bdisp))
+plot(bray.HSD)
+
+# Run PERMANOVA for Week
+(week.wuf <- adonis2(wuf.dist ~ Week_factor, data = mdat, permutations = 9999))
+(week.bray <- adonis2(bray.dist ~ Week_factor, data = mdat, permutations = 9999))
+
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+## BETA DIVERSITY PLOTS {.tabset .tabset-fade .tabset-pills}
+
+The data from an ordination can be plotted in many different ways. Here I will look at the importance of each axis in the PCoA plot, perform standard 2D-ordination plots, and plot dispertion for each variable.
+
+### EIGENVALUES
+
+For PCoA each axis represent a specific amount of the overall variation in the dataset. this information can easily be extracted and plotted.
+
+```{r plot_eigenvalues, eval=TRUE, echo=TRUE}
+
+# load data
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/WUF.RData")
+load("R_objects/Bray.RData")
+
+# Extract eigen values
+wuf.eigen <- wuf.pcoa$values
+wuf.eigen$Axis <- as.numeric(row.names(wuf.eigen))
+
+bray.eigen <- bray.pcoa$values
+bray.eigen$Axis <- as.numeric(row.names(bray.eigen))
+
+# Create plots for both distance indeces
+p.wuf <- ggplot(wuf.eigen[1:10,], aes(x = as.factor(Axis), y = 100*Rel_corr_eig)) + 
+  geom_col(aes(fill = as.factor(Axis))) +
+  geom_point(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  geom_line(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  ylab("Variance explained (%)") +
+  xlab("Axis") +
+  ggtitle("Weighted UniFrac") +
+  theme_pubr(legend = "none")
+
+p.bray <- ggplot(bray.eigen[1:10,], aes(x = as.factor(Axis), y = 100*Rel_corr_eig)) + 
+  geom_col(aes(fill = as.factor(Axis))) +
+  geom_point(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  geom_line(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  ylab("Variance explained (%)") +
+  xlab("Axis") +
+  ggtitle("Bray-Curtis") +
+  theme_pubr(legend = "none")
+
+# Create combined plot
+ggarrange(p.wuf,p.bray, nrow = 1, labels = c("A)","B)"))
+suppressMessages(ggsave("plots/bdiv_PCoA_axis.pdf"))
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### ORDINATION
+
+Phyloseq has a plotting function, but it is a bit limited in some of the settings. Therefore, I recommend to use the function to create a table of the data and then make your own plots
+
+```{r plot_ordination, eval=TRUE, echo=TRUE}
+
+# load data
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/WUF.RData")
+load("R_objects/Bray.RData")
+
+# Create plots of eigenvalues for PCoA plots
+wuf.pcoa.tab <- plot_ordination(phy, wuf.pcoa,axes = 1:5,justDF = TRUE)
+wuf.nmds.tab <- plot_ordination(phy, wuf.nmds,axes = 1:5,justDF = TRUE)
+
+bray.pcoa.tab <- plot_ordination(phy, bray.pcoa,axes = 1:5,justDF = TRUE)
+bray.nmds.tab <- plot_ordination(phy, bray.nmds,axes = 1:5,justDF = TRUE)
+
+# Reformat tables to create one common table
+colnames(wuf.nmds.tab)[1:5] <- c("Axis.1","Axis.2","Axis.3","Axis.4","Axis.5")
+colnames(bray.nmds.tab)[1:5] <- c("Axis.1","Axis.2","Axis.3","Axis.4","Axis.5")
+
+wuf.nmds.tab[,c("metric","ordination")] <- rep(c("wuf","nmds"),each = nrow(wuf.nmds.tab))
+wuf.pcoa.tab[,c("metric","ordination")] <- rep(c("wuf","pcoa"),each = nrow(wuf.pcoa.tab))
+bray.nmds.tab[,c("metric","ordination")] <- rep(c("bray","nmds"),each = nrow(bray.nmds.tab))
+bray.pcoa.tab[,c("metric","ordination")] <- rep(c("bray","pcoa"),each = nrow(bray.pcoa.tab))
+
+ord.tab <- rbind(wuf.nmds.tab,wuf.pcoa.tab, bray.nmds.tab, bray.pcoa.tab)
+
+# Melt axis to be in one variable
+axis.tab <- melt(ord.tab, 
+                 measure.vars = c("Axis.1","Axis.2","Axis.3","Axis.4","Axis.5"),
+                 variable.name = "Axis",
+                 value.name = "position")
+
+# Plot positions on axes
+ggplot(axis.tab, aes(x = metric, y = position, fill = as.factor(Week_clean))) +
+  geom_boxplot() +
+  facet_grid(Axis~ordination) +
+  coord_flip() + 
+  theme_pubr(legend = "bottom")
+
+# Create ordination plots
+ggplot(ord.tab, aes(x = Axis.1, y = Axis.2, color = as.factor(Week_clean))) +
+  geom_point() + 
+  facet_grid(metric~ordination, scales = "free") + 
+  theme_pubr(legend = "bottom") + 
+  labs(color='Week') +
+  stat_ellipse()
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+# COMPOSITIONAL DIFFERENCES
+
+The last part of the initial analyses is to compare the composition of the samples and test the differential abundance of individual ASVs or taxa.
+
+## AGGLOMERATE DATA
+
+Depending on the project and data it might be relevant to agglomerate data at species or higher taxonomic level for this type of analysis.
+
+```{r agglomerate, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Phyloseq.Rdata")
+
+# agglomerate at species and genus level
+phy.sp <- tax_glom(phy, taxrank = "Species")
+phy.ge <- tax_glom(phy, taxrank = "Genus")
+phy.fa <- tax_glom(phy, taxrank = "Family")
+phy.or <- tax_glom(phy, taxrank = "Order")
+phy.cl <- tax_glom(phy, taxrank = "Class")
+phy.ph <- tax_glom(phy, taxrank = "Phylum")
+
+# save agglomerated phyloseq objects
+save(phy.sp, phy.ge, phy.fa, phy.or, phy.cl, phy.ph, file = "R_objects/Agglomerated.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+## CREATE TAXA PLOTS {.tabset .tabset-fade .tabset-pills}
+
+The taxonomic composition can be visualised in many different ways and at all taxonomic levels. In addition to that average abundances for groups can also be relevant to plot. The plots produced here show the relative abundance of the individual samples, with taxa with average abundance below 1% removed, and faceted (split) by a project variable (Week_clean)
+
+### PHYLUM
+
+```{r plot_phylum, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.ph, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### CLASS
+
+```{r plot_class, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.cl, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### ORDER
+
+```{r plot_order, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.or, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### FAMILY
+
+```{r plot_family, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.fa, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+```
+
+### GENUS
+
+```{r plot_genus, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.ge, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### SPECIES
+
+```{r plot_species, eval=TRUE, echo=TRUE}
+# load
+load("R_objects/Agglomerated.RData")
+load("scripts/merge_abundance.Rdata")
+
+# Transform sample counts to abundances
+phy <- transform_sample_counts(phy.sp, fun = function(x) x/sum(x)*100)
+phy.top <- merge_low_abundance(phy, threshold = 0.01)
+phy.top <- prune_taxa(taxa_names(phy.top) != "Other",phy.top)
+taxa_names(phy.top) <- LETTERS[seq(length(taxa_names(phy.top)))]
+
+#Melt data
+dat <- suppressWarnings(psmelt(phy.top))
+colnames(dat)[c(1,4)] <- c("Taxa","SampleID")
+
+# Create plot
+p <- ggplot(dat, aes(x = SampleID, 
+                     y = Abundance, 
+                     fill = Taxa, 
+                     color = Taxa)) +
+  geom_col() +
+  xlab("") + 
+  facet_grid(.~Week_clean,space = "free_x",scales = "free_x") +
+  clean_theme()
+set_palette(p, palette = unname(alphabet()))
+
+# print tax table
+tax <- data.frame(tax_table(phy.top))
+for (i in 7:1) if (is.na(tax[1,i])) tax[,i] <- NULL
+
+kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " ")) %>%
+  kable_classic(full_width = F, position = "left")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+## TEST DIFFERENTIAL ABUNDANCE {.tabset .tabset-fade .tabset-pills}
+
+There are many different methods that can be used to calculate differential abundance, all with their own advantages and disadvantages. Which method to use depends on the data and therefore I will be using DAtest [@DAtest] as described by [Russel et al. (2018)](https://doi.org/10.1101/241802).
+
+### SPECIES
+
+#### TEST METHOD
+
+```{r testDA_species, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.sp <- subset_samples(phy.sp, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.sp, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10)
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified LIMMA - CLR (lic) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest_species, eval=TRUE, echo=TRUE}
+# Run the selected analysis
+filt.DA <- DA.lic(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(DA.sig)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Species, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+```
+
+### GENUS
+
+#### TEST METHOD
+
+```{r testDA_genus, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.ge <- subset_samples(phy.ge, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.ge, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10)
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified LIMMA - CLR (lic) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest_genus, eval=TRUE, echo=TRUE}
+# Run the selected analysis
+filt.DA <- DA.lic(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(DA.sig)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Genus, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+```
+
+### FAMILY
+
+#### TEST METHOD
+
+```{r testDA_family, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.fa <- subset_samples(phy.fa, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.fa, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10)
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified LIMMA (lli) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest, eval=TRUE, echo=TRUE}
+
+# Run the selected analysis
+filt.DA <- DA.lli(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(DA.sig)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Family, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+```
+
+### ORDER
+
+#### TEST METHOD
+
+```{r testDA_order, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.or <- subset_samples(phy.or, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.or, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10,k = c(3,3,3))
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified permutation (per) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest_order, eval=TRUE, echo=TRUE}
+
+# Run the selected analysis
+filt.DA <- DA.per(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(filt.ra)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Order, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+```
+
+### CLASS
+
+#### TEST METHOD
+
+```{r testDA_class, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.cl <- subset_samples(phy.cl, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.cl, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10)
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified LIMMA - CLR (lic) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest_class, eval=TRUE, echo=TRUE}
+
+# Run the selected analysis
+filt.DA <- DA.lic(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(DA.sig)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Class, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+```
+
+### PHYLUM
+
+#### TEST METHOD
+
+```{r testDA_phylum, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+# load
+load("R_objects/Phyloseq.Rdata")
+load("R_objects/Agglomerated.RData")
+
+phy.ph <- subset_samples(phy.ph, Outcome_8 %in% c("Effect","Intermediate") & Week_clean == 0)
+
+# Filter data
+filt <- preDA(data = phy.ph, min.reads = 20, min.samples = 4)
+
+# Test best method 
+filt.test <- testDA(filt, predictor = "Outcome_8",effectSize = 10)
+
+# Evaluate the plot and summary table
+summary(filt.test)
+plot(filt.test)
+
+
+```
+
+#### RUN DAtest
+
+Having now identified LIMMA - CLR (lic) as the optimal test I will use it to calculate differential abundance
+
+```{r DAtest_phylum, eval=TRUE, echo=TRUE}
+
+# Run the selected analysis
+filt.DA <- DA.lic(filt, predictor = "Outcome_8")
+
+# Evaluate the plot and summary table
+table(filt.DA$pval < 0.05)
+
+filt.DA[filt.DA$pval < 0.05,]
+
+# Create a subset of the samples
+filt.ra <- transform_sample_counts(filt, function(x) x/sum(x)*100)
+DA.sig <- prune_taxa(filt.DA$Feature[filt.DA$pval < 0.05], x = filt.ra)
+
+# melt the data
+DAm <- psmelt(DA.sig)
+
+# Create plot
+pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
+ggplot(DAm, aes(x = Species, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
+
+```
+
+## References
