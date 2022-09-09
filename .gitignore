@@ -19,7 +19,7 @@
 
 # RStudio files
 .Rproj.user/
-
+*.Rproj
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
@@ -37,3 +37,10 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# Output from the pipeline (remove if sharing your work)
+R_objects/
+plots/
+tables/
+scripts/
+input/

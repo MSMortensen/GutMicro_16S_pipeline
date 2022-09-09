@@ -17,8 +17,8 @@ knit: (function(inputFile, encoding) {
 bibliography: references.bib
 link-citations: true
 params:
-    input: "output/full.phyloseq_object.RData"
-    meta: "CEFTA_metadata.csv"
+    input: "input/full.phyloseq_object.RData"
+    meta: "input/CEFTA_metadata.csv"
     neg: "Water|Neg|NC|ctrl"
     batch: "Run"
 ---
@@ -48,20 +48,6 @@ if (!file.exists("R_objects")) dir.create(file.path(getwd(), "R_objects"))
 if (!file.exists("plots")) dir.create(file.path(getwd(), "plots"))
 if (!file.exists("tables")) dir.create(file.path(getwd(), "tables"))
 if (!file.exists("scripts")) dir.create(file.path(getwd(), "scripts"))
-
-# Print package versions
-cat("PACKAGES USED IN THIS PIPELINE:\n",
-    "tidyverse:", as.character(packageVersion("tidyverse")), "\t|\t",
-    "phyloseq:", as.character(packageVersion("phyloseq")), "\t|\t",
-    "DAtest:", as.character(packageVersion("DAtest")), "\n",
-    "reshape2:", as.character(packageVersion("reshape2")), "\t|\t",
-    "decontam:", as.character(packageVersion("decontam")), "\t|\t",
-    "ape:", as.character(packageVersion("ape")), "\n",
-    "kableExtra:", as.character(packageVersion("kableExtra")), "\t|\t",
-    "ggpubr:", as.character(packageVersion("ggpubr")), "\t\t|\t",
-    "pals:", as.character(packageVersion("pals")), "\n",
-    "rstatix:", as.character(packageVersion("rstatix")), "\t|\t",
-    "vegan", as.character(packageVersion("vegan")), "\n")
 
 ```
 
@@ -2070,4 +2056,22 @@ ggplot(DAm, aes(x = Species, y = Abundance+pseudocount, color = Outcome_8)) + ge
 
 ```
 
+## SETTINGS  {.tabset .tabset-fade .tabset-pills}
+
+### EXPLANATION
+Overview of the packages that was used for this analysis
+
+### PACKAGES
+The analysis was run in R version `getRversion()` using the following packages:
+```{r packages, eval=TRUE}
+pack <- data.frame(Package = (.packages()))
+
+for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$Package[i]))
+
+kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
+     
+```
+
 ## References
+
+
