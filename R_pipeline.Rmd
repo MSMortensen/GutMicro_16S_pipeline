@@ -49,6 +49,7 @@ if (!file.exists("plots")) dir.create(file.path(getwd(), "plots"))
 if (!file.exists("tables")) dir.create(file.path(getwd(), "tables"))
 if (!file.exists("scripts")) dir.create(file.path(getwd(), "scripts"))
 
+saveRDS(params, "R_objects/params.RDS")
 ```
 
 ## SCRIPTS {.tabset .tabset-fade .tabset-pills}
@@ -124,7 +125,7 @@ clean_taxa <- function(physeq, tax_remove = "Phylum", verbose = TRUE) {
 save(clean_taxa, file = "scripts/clean_tax.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -253,7 +254,7 @@ Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_su
 save(Calculate_alpha_div, Rcurve_data, file = "scripts/adiv.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -346,7 +347,7 @@ merge_prevalence <- function(pobject, variable, min.samples){
 save(merge_less_than_top, merge_low_abundance, file = "scripts/merge_abundance.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -360,6 +361,7 @@ This section will import the ASV data, add metadata, and run decontam
 First step is to load the output from the pipeline. The only part of this section that should be edited is the "grepl" commands to ensure that negative controls and mock samples are properly identified
 
 ```{r Load_pipeline_data, eval = TRUE}
+params <- readRDS("R_objects/params.RDS")
 # Load analysis data
 load(params$input)
 
@@ -420,7 +422,7 @@ sample_data(phy) <- mtmp
 save(phy.org, phy, file="R_objects/input.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -430,7 +432,7 @@ invisible(gc()) #free up memory and report the memory usage.
 Many ASVs lacks species level, or higher, classification. Later steps will use the taxonomic annotation at various levels and some will remove taxa without classification. To avoid data being removed it is necessary to replace missing values with relevant information, this will be the highest available classification. At the same time, ASVs that could not be classified to Phylum or even Kingdom level is likely to be sequencing artifacts and will be removed. For some analyses it might be relevant to only include taxa that has been properly classified, so the level at which unclassified taxa are removed can be modified.
 
 ```{r Clean_taxa, eval = FALSE}
-################################################################################
+params <- readRDS("R_objects/params.RDS")
 # load data 
 load("R_objects/input.Rdata")
 
@@ -444,7 +446,7 @@ phy <- clean_taxa(phy, tax_remove = "Phylum", verbose = TRUE)
 save(phy.org, phy, file="R_objects/cleaned.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -458,7 +460,7 @@ This section runs decontam to remove likely contaminants from the data set [@dec
 Use this option if: - Either initial DNA concentration OR negative controls variable is available in the sample metadata AND - The samples have been processed and sequenced in one batch
 
 ```{r Decontam_single, eval = FALSE}
-################################################################################
+params <- readRDS("R_objects/params.RDS")
 # load data 
 load("R_objects/cleaned.Rdata")
 df <- data.frame(sample_data(phy))
@@ -526,7 +528,7 @@ ggplot(data=df, aes(x=Index, y=depth, color=type)) + geom_point()
 save(phy, file="R_objects/Decontam.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -540,6 +542,7 @@ Use this option if: - The initial DNA concentration AND negative controls variab
 > The included code is for both types of decontam and batches, delete lines as needed THIS SECTION MIGHT FAIL WHILE KNITTING (MEMORY INTENSIVE)
 
 ```{r decontam_multiple, eval = FALSE}
+params <- readRDS("R_objects/params.RDS")
 # load data 
 load("R_objects/cleaned.Rdata")
 
@@ -611,7 +614,7 @@ knitr::include_graphics("plots/contaminant_fraction_multiple.pdf")
 # output plot 
 knitr::include_graphics("plots/mock_comparison.pdf")
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 # Evaluate what you can agree to loose and then use that column. I will use the minimum.minimum
 phy.harsh <- prune_taxa(contam.df$ASV[contam.df$combined.product == FALSE], phy)
@@ -639,7 +642,7 @@ phy.harsh <- prune_taxa(taxa_sums(phy.harsh) >= 5,phy.harsh)
 save(phy, phy.harsh, file="R_objects/Decontam.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -651,6 +654,7 @@ Cleaned phyloseq object saved in: "R_objects/Decontam.Rdata"
 Here we test how the mock community looks compared to the expected abundance. While there might be some differences from the expected mock community, the important part is that mock communities are consistent across runs.
 
 ```{r Mock, eval = TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load data
 load("R_objects/Decontam.Rdata")
 # Subset mocks
@@ -689,7 +693,7 @@ suppressMessages(ggsave(mock.plot, "plots/test_mock_comparison.pdf"))
 # output plot 
 knitr::include_graphics("plots/mock_comparison.pdf")
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -701,6 +705,7 @@ Mock looks fine
 After using decontaminate it is time to evaluate the samples based on the metadata and remove unwanted samples
 
 ```{r clean_meta, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load data
 load("R_objects/Decontam.Rdata")
 
@@ -715,7 +720,7 @@ phy <- prune_taxa(taxa_sums(phy) >=1,phy)
 save(phy, phy.harsh, file="R_objects/Phyloseq.Rdata")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 ```
 
@@ -734,6 +739,7 @@ There is randomness involved in performing rarefaction (random subsampling). To 
 As this is used to assess the sequencing depth to use for the actual rarefaction fewer rarefactions is acceptable. Default maxdepth is set to the highest sequencing depth, but a lower value can be set. Here I will use the quantile function to look at the distribution of sequencing depths and then set it at the 90th quantile
 
 ```{r rare_curve_calc, eval = FALSE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("scripts/adiv.Rdata")
@@ -758,7 +764,7 @@ Rdat.m$Alpha_diversity[Rdat.m$Alpha_diversity == "NaN"] <- 1
 save(Rdat.m, file = "R_objects/Rare_dat.RData")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -768,6 +774,7 @@ invisible(gc()) #free up memory and report the memory usage.
 The rarefaction curves can be plottet for each sample by some other variable. Remember that the mock samples are expected to be very different. Also when grouping by other than sample there might be large changes when passing the actual sequencing depth of individual samples.
 
 ```{r rare_curve_plot, eval = FALSE, echo = TRUE}
+params <- readRDS("R_objects/params.RDS")
 # Load data
 load("R_objects/Rare_dat.RData")
 
@@ -791,7 +798,7 @@ ggplot(Rdat.m, aes(x = depth, y = Alpha_diversity, color = Run_type)) +
 suppressMessages(ggsave("plots/Rcurve_grouped.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -815,6 +822,7 @@ knitr::include_graphics("plots/Rcurve_grouped.pdf")
 Based on the rarefaction curves, I will remove samples with less than 10,000 reads before rarefaction. Not rarefying a sample can also create a bias, so to avoid this I will rarefy all samples to 90% of the lowest sample depth (default setting). As this will be done for just one sequencing depth and we need the results to be consistent default setting is to rarefy 100 times. The function will produce a data.frame with sample metadata and the mean and standard deviation for each sample using the methods set prior.
 
 ```{r alpha_div_calc, eval=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load data
 load("R_objects/Phyloseq.Rdata")
 load("scripts/adiv.Rdata")
@@ -836,7 +844,7 @@ adat <- adat[adat$type == "Sample",]
 save(adat, adat.wm, R.methods, file="R_objects/AlphaDiversity.RData")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"]) #will clear all objects includes hidden objects.
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
 invisible(gc()) #free up memory and report the memory usage.
 
 ```
@@ -846,6 +854,7 @@ invisible(gc()) #free up memory and report the memory usage.
 Before testing any of the project specific variables it is important to determine if there is any batch effects that affect the samples (for example extraction batches or sequencing run)
 
 ```{r alpha_div_batch, eval=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # Load data
 load("R_objects/AlphaDiversity.RData")
 
@@ -902,7 +911,7 @@ ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,leg
 suppressMessages(ggsave("plots/adiv_batch.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -916,6 +925,7 @@ Keeping in mind possible batch effects, now we can test for project effects. Dep
 Here is code to test alpha diversity for a single variable.
 
 ```{r alpha_div_Week, eval=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # Load data
 load("R_objects/AlphaDiversity.RData")
 
@@ -993,7 +1003,7 @@ ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,leg
 suppressMessages(ggsave("plots/adiv_Week.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1003,6 +1013,7 @@ invisible(gc())
 Here is code to test alpha diversity for a single variable.
 
 ```{r alpha_div_Outcome, eval=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # Load data
 load("R_objects/AlphaDiversity.RData")
 
@@ -1079,7 +1090,7 @@ ggarrange(p.obs,p.sdi, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,leg
 suppressMessages(ggsave("plots/adiv_outcome.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1087,6 +1098,7 @@ invisible(gc())
 ### WEEK AND OUTCOME (NESTED)
 
 ```{r adiv_nested, eval = FALSE}
+params <- readRDS("R_objects/params.RDS")
 # Load data
 load("R_objects/AlphaDiversity.RData")
 
@@ -1172,7 +1184,7 @@ ggarrange(p.obs,p.sha, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,leg
 suppressMessages(ggsave("plots/adiv_outcome_week.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 
@@ -1191,6 +1203,7 @@ I will calculate for both weighted UniFrac distances and Bray-Curtis dissimilari
 The unique fraction metric, or UniFrac, measures the phylogenetic distance between sets of taxa in a phylogenetic tree as the fraction of the branch length of the tree that leads to descendants from either one environment or the other, but not both [(Lozupone & Knight, 2005)](https://doi.org/10.1128/AEM.71.12.8228-8235.2005). Weighted UniFrac takes the abundance of each ASV into account instead of just presence/absence, which means that it will not be sensitive to sequencing depth. The UniFrac algorithm requires a rooted tree, so if ASVs has been removed from the raw da the tree should be rerooted manually, else a random ASV will be chosen as root.
 
 ```{r calc_WUniFrac, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 
@@ -1208,7 +1221,7 @@ wuf.nmds <- metaMDS(wuf.dist, k = 5, trymax = 100)
 save(wuf.dist, wuf.nmds, wuf.pcoa, file = "R_objects/WUF.RData")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1218,6 +1231,7 @@ invisible(gc())
 Bray-Curtis dissimilarity index (as implemented by the vegan package) is the sum of abundance difference for each species/ASV, divided by theoretical maximum difference between the samples if no ASV overlapped. The formula used is: $$d_{jk} = \frac{\sum|n_{ij}-n_{ik}|}{\sum(n_{ij}+n_{ik})}$$ Bray-Curtis dissimilarity is not a true distance metric as it does not adhere to the [triangle inequality](), but is often used to compare microbiomes. Bray-Curtis dissimilarities are based on the assumption that measurements are taken from equal areas, so differences in total counts between samples will bias the metric. As differences in sequences depth is due to differences in the lab procedures and not biological differences, we should transform our counts to relative abundances before calculating Bray-Curtis dissimilarities.
 
 ```{r calc_bray, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 
@@ -1235,7 +1249,7 @@ bray.nmds <- metaMDS(bray.dist, k = 5, trymax = 100)
 save(bray.dist, bray.nmds, bray.pcoa, file = "R_objects/Bray.RData")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1251,6 +1265,7 @@ I will test each diversity index individually, so if additional indeces have bee
 #### WEIGHTED UNIFRAC
 
 ```{r batch_WUF, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/WUF.RData")
@@ -1270,7 +1285,7 @@ plot(batch.bdisp)
 boxplot(batch.bdisp)
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1278,6 +1293,7 @@ invisible(gc())
 #### BRAY-CURTIS
 
 ```{r batch_Bray, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Bray.RData")
@@ -1297,7 +1313,7 @@ plot(batch.bdisp)
 boxplot(batch.bdisp)
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1313,6 +1329,7 @@ I will run the same tests as above (adonis2 and betadisper), but this time I wil
 #### WEEK
 
 ```{r beta_week, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/WUF.RData")
@@ -1352,7 +1369,7 @@ plot(bray.HSD)
 
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1366,7 +1383,7 @@ The data from an ordination can be plotted in many different ways. Here I will l
 For PCoA each axis represent a specific amount of the overall variation in the dataset. this information can easily be extracted and plotted.
 
 ```{r plot_eigenvalues, eval=TRUE, echo=TRUE}
-
+params <- readRDS("R_objects/params.RDS")
 # load data
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/WUF.RData")
@@ -1403,7 +1420,7 @@ ggarrange(p.wuf,p.bray, nrow = 1, labels = c("A)","B)"))
 suppressMessages(ggsave("plots/bdiv_PCoA_axis.pdf"))
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1413,7 +1430,7 @@ invisible(gc())
 Phyloseq has a plotting function, but it is a bit limited in some of the settings. Therefore, I recommend to use the function to create a table of the data and then make your own plots
 
 ```{r plot_ordination, eval=TRUE, echo=TRUE}
-
+params <- readRDS("R_objects/params.RDS")
 # load data
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/WUF.RData")
@@ -1459,7 +1476,7 @@ ggplot(ord.tab, aes(x = Axis.1, y = Axis.2, color = as.factor(Week_clean))) +
   stat_ellipse()
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1473,6 +1490,7 @@ The last part of the initial analyses is to compare the composition of the sampl
 Depending on the project and data it might be relevant to agglomerate data at species or higher taxonomic level for this type of analysis.
 
 ```{r agglomerate, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 
@@ -1488,7 +1506,7 @@ phy.ph <- tax_glom(phy, taxrank = "Phylum")
 save(phy.sp, phy.ge, phy.fa, phy.or, phy.cl, phy.ph, file = "R_objects/Agglomerated.RData")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1500,6 +1518,7 @@ The taxonomic composition can be visualised in many different ways and at all ta
 ### PHYLUM
 
 ```{r plot_phylum, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1533,7 +1552,7 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1541,6 +1560,7 @@ invisible(gc())
 ### CLASS
 
 ```{r plot_class, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1574,7 +1594,7 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1582,6 +1602,7 @@ invisible(gc())
 ### ORDER
 
 ```{r plot_order, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1615,7 +1636,7 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1623,6 +1644,7 @@ invisible(gc())
 ### FAMILY
 
 ```{r plot_family, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1656,13 +1678,14 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 ```
 
 ### GENUS
 
 ```{r plot_genus, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1696,7 +1719,7 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1704,6 +1727,7 @@ invisible(gc())
 ### SPECIES
 
 ```{r plot_species, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Agglomerated.RData")
 load("scripts/merge_abundance.Rdata")
@@ -1737,7 +1761,7 @@ kable(tax,caption = paste("Taxa plotted at", colnames(tax)[ncol(tax)], sep = " "
   kable_classic(full_width = F, position = "left")
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 
 ```
@@ -1751,6 +1775,7 @@ There are many different methods that can be used to calculate differential abun
 #### TEST METHOD
 
 ```{r testDA_species, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -1795,7 +1820,7 @@ pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
 ggplot(DAm, aes(x = Species, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 ```
 
@@ -1804,6 +1829,7 @@ invisible(gc())
 #### TEST METHOD
 
 ```{r testDA_genus, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -1848,7 +1874,7 @@ pseudocount <- min(DAm$Abundance[DAm$Abundance != 0])
 ggplot(DAm, aes(x = Genus, y = Abundance+pseudocount, color = Outcome_8)) + geom_boxplot() + scale_y_log10() + coord_flip()
 
 # clear the environment and release memory
-rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+rm(list = ls(all.names = TRUE))
 invisible(gc())
 ```
 
@@ -1857,6 +1883,7 @@ invisible(gc())
 #### TEST METHOD
 
 ```{r testDA_family, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -1908,6 +1935,7 @@ ggplot(DAm, aes(x = Family, y = Abundance+pseudocount, color = Outcome_8)) + geo
 #### TEST METHOD
 
 ```{r testDA_order, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -1959,6 +1987,7 @@ ggplot(DAm, aes(x = Order, y = Abundance+pseudocount, color = Outcome_8)) + geom
 #### TEST METHOD
 
 ```{r testDA_class, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -2010,6 +2039,7 @@ ggplot(DAm, aes(x = Class, y = Abundance+pseudocount, color = Outcome_8)) + geom
 #### TEST METHOD
 
 ```{r testDA_phylum, eval=TRUE, echo=TRUE,fig.width=10, fig.height=5}
+params <- readRDS("R_objects/params.RDS")
 # load
 load("R_objects/Phyloseq.Rdata")
 load("R_objects/Agglomerated.RData")
@@ -2056,13 +2086,16 @@ ggplot(DAm, aes(x = Species, y = Abundance+pseudocount, color = Outcome_8)) + ge
 
 ```
 
-## SETTINGS  {.tabset .tabset-fade .tabset-pills}
+## SETTINGS {.tabset .tabset-fade .tabset-pills}
 
 ### EXPLANATION
+
 Overview of the packages that was used for this analysis
 
 ### PACKAGES
+
 The analysis was run in R version `getRversion()` using the following packages:
+
 ```{r packages, eval=TRUE}
 pack <- data.frame(Package = (.packages()))
 
@@ -2072,6 +2105,11 @@ kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_optio
      
 ```
 
+### PARAMETERS
+```{r parameters, eval=TRUE}
+params <- readRDS("R_objects/params.RDS")
+
+dat <- as.data.frame(params)
+
+```
 ## References
-
-
