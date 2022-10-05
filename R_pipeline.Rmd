@@ -259,6 +259,7 @@ invisible(gc()) #free up memory and report the memory usage.
 
 ```
 
+
 ### FILTER TAXA
 
 These functions are used to merge ASV that are not one of the most abundant, or below a defined threshold, into "Other"
@@ -278,17 +279,18 @@ merge_less_than_top <- function(pobject, top=10){
   
   # Create list of ASVs to merge
   otu.list <- row.names(otu.sort[(top+1):nrow(otu.sort),])
+  if(any("Others" %in% rownames(otu.table))) otu.list <- c(otu.list,"Others")
   
   # perform the merger with the original sample counts
   merged <- merge_taxa(pobject, otu.list, 1)
   
   # change the taxa name
-  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Other"
+  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Others"
   
   # change taxa to "Other" for all levels not being NAs
   for (i in 1:ncol(tax_table(merged))){
     if (sum(!is.na(tax_table(merged)[,i]))){
-      tax_table(merged)["Other",i] <- "Other"
+      tax_table(merged)["Others",i] <- "Others"
     }
   }
   return(merged)
@@ -296,6 +298,7 @@ merge_less_than_top <- function(pobject, top=10){
 
 # This function merges ASVs that are below a defined ratio, with the default being 0.001 (0.1%)
 merge_low_abundance <- function(pobject, threshold=0.001){
+  
   # transform to sample counts to relative values
   transformed <- transform_sample_counts(pobject, function(x) x/sum(x))
   
@@ -304,17 +307,18 @@ merge_low_abundance <- function(pobject, threshold=0.001){
   
   # Create list of ASVs to merge
   otu.list <- row.names(otu.table[rowMeans(otu.table) < threshold,])
+  if(any("Others" %in% rownames(otu.table))) otu.list <- c(otu.list,"Others")
 
   # perform the merger with the original sample counts
   merged <- merge_taxa(pobject, otu.list, 1)
   
   # change the taxa name
-  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Other"
+  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Others"
   
   # change taxa to "Other" for all levels not being NAs
   for (i in 1:ncol(tax_table(merged))){
     if (sum(!is.na(tax_table(merged)[,i]))){
-      tax_table(merged)["Other",i] <- "Other"
+      tax_table(merged)["Others",i] <- "Others"
     }
   }
   return(merged)
@@ -335,12 +339,27 @@ merge_prevalence <- function(pobject, variable, min.samples){
   
   # create count table
   counts <- data.frame(row.names = row.names(otu.table))
-  for (seq(length(vgroup))) counts[,vgroup[i]] <- rowSums(otu.table[,dat[,variable]==vgroup[i]])
+  for (i in seq(length(vgroup))) counts[,vgroup[i]] <- rowSums(otu.table[,dat[,variable]==vgroup[i]])
   
-  counts$keep <- ifelse
+  counts$keep <- ifelse(rowSums(counts) > min.sample*length(vgroup), TRUE, FALSE)
   
-    # Orientate and export otu table
-  if (taxa_are_rows(transformed)) otu.table <- as.data.frame(otu_table(transformed)) else otu.table <- as.data.frame(t(otu_table(transformed)))otu_all <- 
+  # Create list of ASVs to merge
+  otu.list <- row.names(counts[!counts$keep,])
+  if(any("Others" %in% rownames(otu.table))) otu.list <- c(otu.list,"Others")
+
+  # perform the merger with the original sample counts
+  merged <- merge_taxa(pobject, otu.list, 1)
+  
+  # change the taxa name
+  taxa_names(merged)[taxa_names(merged) %in% otu.list[1]] <- "Others"
+  
+  # change taxa to "Other" for all levels not being NAs
+  for (i in 1:ncol(tax_table(merged))){
+    if (sum(!is.na(tax_table(merged)[,i]))){
+      tax_table(merged)["Others",i] <- "Others"
+    }
+  }
+  return(merged)
   
 }
 # save functions
