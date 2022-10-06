@@ -15,8 +15,8 @@ knit: (function(inputFile, encoding) {
         output_file = paste0("CEFTA_", Sys.Date(), "_ImportQC.html")) 
     })
 params:
-    input: "full.phyloseq_object.RData"
-    meta: "CEFTA_metadata.csv"
+    input: "input/full.phyloseq_object.RData"
+    meta: "input/CEFTA_metadata.csv"
     neg: "Water|Neg|NC|ctrl"
     batch: "Run"
 ---
@@ -37,6 +37,7 @@ library(ggpubr)
 library(vegan)
 library(reshape2)
 library(ape)
+library(phangorn)
 library(kableExtra)
 
 # Create used folders if missing
@@ -665,17 +666,19 @@ After using decontaminate and evaluating the mock communities we can now create 
 load("R_objects/Decontam.Rdata")
 
 # remove low read samples and mock
-phy <- prune_samples(sample_sums(phy) < 13000, phy)
+phy <- prune_samples(sample_sums(phy) > 13000, phy)
 phy <- subset_samples(phy, type == "Sample")
 phy <- prune_taxa(taxa_sums(phy) > 0, phy)
+phy_tree(phy) <- midpoint(phy_tree(phy))
 
 # Save gently decontaminated samples
 save(phy, file="R_objects/Phyloseq.Rdata")
 
 # remove low read samples and mock from harshly decontaminated
-phy <- prune_samples(sample_sums(phy.harsh) < 10000, phy.harsh)
+phy <- prune_samples(sample_sums(phy.harsh) > 10000, phy.harsh)
 phy <- subset_samples(phy, type == "Sample")
 phy <- prune_taxa(taxa_sums(phy) > 0, phy)
+phy_tree(phy) <- midpoint(phy_tree(phy))
 
 # save harshely decontaminated samples
 save(phy, file="R_objects/Phyloseq_harsh.Rdata")
@@ -701,7 +704,7 @@ Overview of the packages and parameters that was used for this analysis
 
 ## PACKAGES
 
-The analysis was run in R version `getRversion()` using the following packages:
+The analysis was run in R version `r getRversion()` using the following packages:
 
 ```{r packages, eval=TRUE}
 pack <- data.frame(Package = (.packages()))
