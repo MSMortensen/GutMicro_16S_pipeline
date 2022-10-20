@@ -21,7 +21,7 @@ params:
 
 # ALPHA DIVERSITY {.tabset .tabset-fade .tabset-pills}
 
-This Rmarkdown contains the commands necessary to perform alpha diversity analysis initial analyses of the output from the DF_GMH_PIPELINE. It is expected that the data has been imported, cleaned, and saved following the script 1_Import_QC.Rmd prior to using this script. I recommend visiting the ["Analysis of community ecology data in R"](https://www.davidzeleny.net/anadat-r/doku.php/en:start) to read about the theory behind the alpha and beta diversity and examples of the necessary R-code to execute them. Other excellent source of help is the R [cheat-sheets](https://www.rstudio.com/resources/cheatsheets/) and for problems related to Rmarkdown I suggest this [online Book](https://bookdown.org/yihui/rmarkdown/).
+This Rmarkdown contains the commands necessary to perform alpha diversity analysis of the output from the DF_GMH_PIPELINE. It is expected that the data has been imported, cleaned, and saved following the script 1_Import_QC.Rmd prior to using this script. I recommend visiting the ["Analysis of community ecology data in R"](https://www.davidzeleny.net/anadat-r/doku.php/en:start) to read about the theory behind the alpha and beta diversity and examples of the necessary R-code to execute them. Other excellent source of help is the R [cheat-sheets](https://www.rstudio.com/resources/cheatsheets/) and for problems related to Rmarkdown I suggest this [online Book](https://bookdown.org/yihui/rmarkdown/).
 
 Alpha diversity, also called "within sample diversity" is calculated for each sample individually and is independent of all other samples. Alpha diversity is sensitive to sequencing depth, so rarefaction must be done first.
 
@@ -33,12 +33,8 @@ knitr::opts_chunk$set(echo = TRUE)
 # Load libraries
 library(tidyverse)
 library(phyloseq)
-library(pals)
 library(ggpubr)
 library(rstatix)
-library(reshape2)
-library(DAtest)
-library(ape)
 library(kableExtra)
 library(picante)
 
@@ -145,7 +141,7 @@ Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_su
     
     if ("Shannon" %in% methods){
       # Calculate observed richness for each rep of sample z
-      adiv <- diversity(rare_tab, index = "shannon")
+      adiv <- vegan::diversity(rare_tab, index = "shannon")
       
       # Save mean and sd of observed richness
       Alpha_diversity$Shannon[z] <- mean(adiv)
@@ -232,13 +228,13 @@ params <- readRDS("R_objects/Adiv_params.RDS")
 load("R_objects/AlphaDiversity.RData")
 
 ### Test observed richness
-Formula <- paste("Observed ~", params$batch, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Observed ~", params$batch, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = params$batch) %>%
@@ -264,13 +260,13 @@ p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 ### Test shannon diversity index
 # Run statistical test of batch effect
-Formula <- paste("Shannon ~", params$batch, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Shannon ~", params$batch, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = params$batch) %>%
@@ -294,13 +290,13 @@ p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 # If there is a significant batch effect, then it will be necessary to correct following tests for this effect.
 
 # Test Faith phylogenetic distance
-Formula <- paste("FaithPD ~", params$batch, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("FaithPD ~", params$batch, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = params$batch) %>%
@@ -374,13 +370,13 @@ As there is no significant interaction identified by the chi^2^-test, we can ign
 adat <- adat[adat$FMT == 1,]
 #### Test project variable
 ### Observed richness
-Formula <- paste("Observed ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Observed ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -406,13 +402,13 @@ p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 ### Test shannon diversity index
 # Run statistical test of batch effect
-Formula <- paste("Shannon ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Shannon ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -434,13 +430,13 @@ p <- ggboxplot(adat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "j
 p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 # Test Faith phylogenetic distance
-Formula <- paste("FaithPD ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("FaithPD ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -509,13 +505,13 @@ As there is no significant interaction identified by the chi^2^-test, we can ign
 
 #### Test project variable
 ### Observed richness
-Formula <- paste("Observed ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Observed ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -541,13 +537,13 @@ p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 ### Test shannon diversity index
 # Run statistical test of batch effect
-Formula <- paste("Shannon ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("Shannon ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -569,13 +565,13 @@ p <- ggboxplot(adat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "j
 p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 # Test Faith phylogenetic distance
-Formula <- paste("FaithPD ~", TEST.VAR, sep = " ")
-compare_means(as.formula(Formula),  data = adat, method = "kruskal")
+FORMULA <- as.formula(paste("FaithPD ~", TEST.VAR, sep = " "))
+compare_means(FORMULA,  data = adat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
 stat.test <- adat %>%
-  wilcox_test(as.formula(Formula)) %>%
+  wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
   add_x_position(x = TEST.VAR) %>%
@@ -792,9 +788,12 @@ pairs(adat[,CON.VARS], pch = 19,  cex = 0.5,
 
 # Create heatmap
 corrmat_rounded <- round(corrmat, 2)
-melted_corrmat_rounded <- melt(corrmat_rounded)
 
-ggplot(melted_corrmat_rounded, aes(x = Var1, y = Var2, fill = value)) + 
+melted_corrmat_rounded <- tibble(Var1 = rep(row.names(corrmat_rounded), length(row.names(corrmat_rounded))),
+                                 Var2 = rep(row.names(corrmat_rounded), each = length(row.names(corrmat_rounded))),
+                                 dist = as.numeric(matrix(corrmat_rounded)))
+
+ggplot(melted_corrmat_rounded, aes(x = Var1, y = Var2, fill = dist)) + 
   labs(title = "Correlation between continous variables") + 
   geom_tile(color = "white") + 
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limit = c(-1,1), 
@@ -807,7 +806,7 @@ ggplot(melted_corrmat_rounded, aes(x = Var1, y = Var2, fill = value)) +
         panel.border = element_blank(),
         panel.background = element_blank(),
         axis.ticks = element_blank()) + 
-  geom_text(aes(x = Var1, y = Var2, label = value), color = "black", size = 4) + 
+  geom_text(aes(x = Var1, y = Var2, label = dist), color = "black", size = 4) + 
   coord_fixed()
 
 # The significance of any correlations can the be tested individually
@@ -894,9 +893,22 @@ suppressMessages(ggsave(filename = filename, device = "png"))
 
 # SETTINGS {.tabset .tabset-fade .tabset-pills}
 
-## EXPLANATION
+Overview of the parameters and packages that were used for this analysis
 
-Overview of the packages that was used for this analysis
+## PARAMETERS
+
+The following paramenters were set in for this analysis:
+
+```{r parameters, eval=TRUE}
+params <- readRDS("R_objects/Adiv_params.RDS")
+
+tmp <- unlist(params)
+dat <- data.frame(Parameter = names(tmp), Value = unname(tmp))
+
+
+kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
+
+```
 
 ## PACKAGES
 
@@ -909,16 +921,4 @@ for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$P
 
 kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
      
-```
-
-## PARAMETERS
-
-```{r parameters, eval=TRUE}
-params <- readRDS("R_objects/Adiv_params.RDS")
-
-tmp <- unlist(params)
-dat <- data.frame(Parameter = names(tmp), Value = unname(tmp))
-
-
-kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
 ```

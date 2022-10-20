@@ -26,7 +26,7 @@ params:
 This Rmarkdown contains the commands necessary to perform initial import and QC of the output from the DF_GMH_PIPELINE There will be things that should be updated to fit the exact project. It is important that metadata is loaded correctly and it should contain a variable identifying negative controls and mock samples. I recommend visiting the ["Analysis of community ecology data in R"](https://www.davidzeleny.net/anadat-r/doku.php/en:start) to read about the theory behind the alpha and beta diversity and examples of the necessary R-code to execute them. For analyses of differential abundance I will use the DAtest package [(Russel et al., 2018)](https://www.biorxiv.org/content/10.1101/241802v1). Another excellent source of help is the R [cheat-sheets](https://www.rstudio.com/resources/cheatsheets/).
 
 ```{r setup, eval=TRUE, echo=TRUE, message=FALSE,warning = FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE ,warning = FALSE, message = FALSE)
 
 # Load libraries
 library(tidyverse)
@@ -35,8 +35,6 @@ library(decontam)
 library(pals)
 library(ggpubr)
 library(vegan)
-library(reshape2)
-library(ape)
 library(phangorn)
 library(kableExtra)
 
@@ -215,7 +213,7 @@ Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_su
     
     if ("Shannon" %in% methods){
       # Calculate observed richness for each rep of sample z
-      adiv <- diversity(rare_tab, index = "shannon")
+      adiv <- vegan::diversity(rare_tab, index = "shannon")
       
       # Save mean and sd of observed richness
       Alpha_diversity$Shannon[z] <- mean(adiv)
@@ -290,13 +288,17 @@ phy.org <- phy
 ```
 
 Next step is to load the metadata for the project. This step will have to be edited to fit the files and names used.
+It can be easier to use the build in import function to import correctly and then save the created code here to reproduce import later (File > Import Dataset > From Text (readr)).
 
 ```{r Load_meta_data_a, eval = TRUE}
 # export sample data
 tmp <- data.frame(sample_data(phy))
 
 # Load metadata - This part will be specific to the project
-meta <- read.csv(params$meta, header = T)
+meta <- read_csv("input/CEFTA_metadata.csv", 
+                 col_types = cols(`Nedfrosset dato` = col_datetime(format = "%d-%m-%Y"), 
+                                  Week_clean = col_factor(levels = c("0", "1", "8")), FMT = col_integer(), 
+                                  Batch = col_factor(levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"))))
 
 # Create an identical ID variable to use for merging
 meta$ID <- with(meta, paste(Run,Sample_ID, sep = "_"))
@@ -307,19 +309,15 @@ tmp[!tmp$ID %in% meta$ID,]
 nrow(meta[!meta$ID %in% tmp$ID,])
 
 # Check which, if any columns, are in both tables
-colnames(tmp)[colnames(tmp) %in% colnames(meta)]
+shared_cols <- colnames(tmp)[colnames(tmp) %in% colnames(meta)] %>% .[. != "ID"]
 ```
 
 ```{r Load_meta_data_b, eval = TRUE}
 # If any other columns than ID is in both, consider if you want it removed
-meta$Run <- NULL
-meta$reads <- NULL
-meta$ASVs <- NULL
-meta$is.neg <- NULL
-meta$type <- NULL
+meta <- meta %>% select(-one_of(shared_cols))
 
 # When you are sure that all match, then merge and add to phyloseq
-mtmp <- merge(tmp,meta,by="ID")
+mtmp <- left_join(tmp,meta,by="ID")
 row.names(mtmp) <- mtmp$ID
 
 # Add the merged data to the phyloseq object
@@ -407,15 +405,15 @@ contam.df$minimum.fisher <- isContaminant(phy, method="minimum", neg="is.neg", c
 
 # decontam summary
 contam.df$ASV <- row.names(contam.df)
-contam.long <- reshape2::melt(contam.df, id.vars = "ASV",variable.name = "Method",value.name = "Contaminant")
+contam.long <- pivot_longer(contam.df, !ASV, names_to = "Method", values_to = "Contaminant")
 
 # Merge with sample data
 ps.prc <- transform_sample_counts(phy, function(x) 100*x/sum(x))
 prc.melt <- suppressWarnings(psmelt(ps.prc))
-prc.m <- merge(prc.melt, contam.long, by.y = "ASV", by.x = "OTU", all = TRUE)
+prc.m <- full_join(prc.melt, contam.long, by = c("OTU" = "ASV"))
 
 # Aggregate and plot
-prc.agg <- aggregate(Abundance ~ Sample+type+Method+Contaminant, data = prc.m, FUN = sum)
+prc.agg <- prc.m %>% group_by(Sample, type, Method, Contaminant) %>% summarise(Abundance = sum(Abundance))
 decontam.plot <- ggplot(prc.agg[prc.agg$Contaminant,], aes(x = type, y = Abundance,color = Method)) +
   geom_boxplot()  +
   scale_color_manual(values=unname(pals::polychrome(n=length(unique(prc.agg$Method)))))
@@ -472,9 +470,9 @@ tmp.samples <- data.frame(cbind(tax_table(tmp.phy), t(otu_table(tmp.phy))))
 
 tmp.samples$ASV <- row.names(tmp.samples)
 tmp.contam <- data.frame(ASV = contam.df$ASV, contam_phy = contam.df$minimum.minimum, contam_harsh = contam.df$Freq.product)
-tmp.out <- merge(tmp.samples, tmp.contam, by = "ASV")
+tmp.out <- full_join(tmp.samples, tmp.contam, by = "ASV")
 
-write.csv(tmp.out,file = "output/Decontam_Overview.csv")
+write_csv(tmp.out,file = "output/Decontam_Overview.csv")
 # clear the environment and release memory
 rm(list = ls(all.names = TRUE))
 invisible(gc())
@@ -516,7 +514,8 @@ mock.clean <- mock[,c("Sample","Abundance","Family")]
 mock.clean$Family <- ifelse(mock.clean$Family %in% mock.org.clean$Family, mock.clean$Family, NA)
 mock.clean <- rbind(mock.clean,mock.org.clean)
 
-mock.ag <- aggregate(Abundance ~ Sample + Family, data = mock.clean, FUN = sum)
+mock.ag <- mock.clean %>% group_by(Sample, Family) %>% summarise(Abundance = sum(Abundance))
+
 # Create plots
 mock.plot <- ggbarplot(mock.ag, x = "Sample", y = "Abundance", fill = "Family", palette = "npg",rotate=TRUE, ylab = FALSE)
 
@@ -553,7 +552,7 @@ mdepth <- round(unname(quantile(sample_sums(phy),0.9)))
 Rdat <- Rcurve_data(phy, methods = R.methods, maxdepth = mdepth)
 
 # melt data table
-Rdat.m <- reshape2::melt(data = Rdat, id.vars = c(sample_variables(phy), "depth"),measure.vars = R.methods,variable.name = "Index", value.name = "Alpha_diversity")
+Rdat.m <- pivot_longer(data = Rdat, cols = R.methods, names_to = "Index", values_to = "Alpha_diversity")
 Rdat.m$Alpha_diversity[Rdat.m$Alpha_diversity == "NaN"] <- 1
 
 # save Rdat
@@ -566,7 +565,7 @@ mdepth <- round(unname(quantile(sample_sums(phy.harsh),0.9)))
 Rdat <- Rcurve_data(phy.harsh, methods = R.methods, maxdepth = mdepth)
 
 # melt data table
-Rdat.m <- reshape2::melt(data = Rdat, id.vars = c(sample_variables(phy), "depth"),measure.vars = R.methods,variable.name = "Index", value.name = "Alpha_diversity")
+Rdat.m <- pivot_longer(data = Rdat, cols = R.methods, names_to = "Index", values_to = "Alpha_diversity")
 Rdat.m$Alpha_diversity[Rdat.m$Alpha_diversity == "NaN"] <- 1
 
 # save Rdat
@@ -597,7 +596,7 @@ plot.ind <- ggplot(Rdat.m, aes_string(x = "depth", y = "Alpha_diversity", color 
   theme_pubclean() + scale_color_brewer(palette = "Paired")
 suppressMessages(ggsave(filename = "plots/Rcurve_individual.png",plot = plot.ind, device = "png"))
 
-Rdat.m$Batch_type <- paste(Rdat.m[,params$batch], Rdat.m$type, sep = "_")
+Rdat.m <- Rdat.m %>% unite("Batch_type", c(params$batch, "type"), na.rm = TRUE, remove = FALSE)
 
 # plot per run and sample type
 plot.group <- ggplot(Rdat.m, aes(x = depth, y = Alpha_diversity, color = Batch_type)) + 
@@ -636,7 +635,7 @@ plot.ind <- ggplot(Rdat.m, aes_string(x = "depth", y = "Alpha_diversity", color 
   theme_pubclean() + scale_color_brewer(palette = "Paired")
 suppressMessages(ggsave(filename = "plots/Rcurve_individual_harsh.png",plot = plot.ind, device = "png"))
 
-Rdat.m$Batch_type <- paste(Rdat.m[,params$batch], Rdat.m$type, sep = "_")
+Rdat.m <- Rdat.m %>% unite("Batch_type", c(params$batch, "type"), na.rm = TRUE, remove = FALSE)
 
 # plot per run and sample type
 plot.group <- ggplot(Rdat.m, aes(x = depth, y = Alpha_diversity, color = Batch_type)) + 
@@ -698,9 +697,22 @@ This completes data import, initial cleaning, and QC of the sequencing data. The
 
 # SETTINGS {.tabset .tabset-fade .tabset-pills}
 
-## EXPLANATION
+Overview of the parameters and packages that were used for this analysis
 
-Overview of the packages and parameters that was used for this analysis
+## PARAMETERS
+
+The following paramenters were set in for this analysis:
+
+```{r parameters, eval=TRUE}
+params <- readRDS("R_objects/import_params.RDS")
+
+tmp <- unlist(params)
+dat <- data.frame(Parameter = names(tmp), Value = unname(tmp))
+
+
+kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
+
+```
 
 ## PACKAGES
 
@@ -713,17 +725,4 @@ for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$P
 
 kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
      
-```
-
-## PARAMETERS
-
-```{r parameters, eval=TRUE}
-params <- readRDS("R_objects/import_params.RDS")
-
-tmp <- unlist(params)
-dat <- data.frame(Parameter = names(tmp), Value = unname(tmp))
-
-
-kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")  
-
 ```

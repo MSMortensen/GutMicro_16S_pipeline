@@ -1,0 +1,549 @@
+---
+title: "CEFTA Microbiome Beta Diversity"
+author: "masmo"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    toc_depth: 4
+    collapsed: false
+    code_folding: hide
+    number_sections: true
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding,
+        output_dir = file.path(dirname(inputFile),"output"),
+        output_file = paste0("CEFTA_", Sys.Date(), "_BetaDiversity.html")) 
+    })
+params:
+    input: "R_objects/Phyloseq_harsh.Rdata"
+    batch: "Run"
+---
+
+# BETA DIVERSITY
+
+This Rmarkdown contains the commands necessary to perform beta diversity analysis of the output from the DF_GMH_PIPELINE. It is expected that the data has been imported, cleaned, and saved following the script 1_Import_QC.Rmd prior to using this script. I recommend visiting the ["Analysis of community ecology data in R"](https://www.davidzeleny.net/anadat-r/doku.php/en:start) to read about the theory behind the alpha and beta diversity and examples of the necessary R-code to execute them. Other excellent source of help is the R [cheat-sheets](https://www.rstudio.com/resources/cheatsheets/) and for problems related to Rmarkdown I suggest this [online Book](https://bookdown.org/yihui/rmarkdown/).
+
+**Beta diversity**, also called "between sample diversity" is a measurement of the distance, or difference, between samples. First step will be to calculate the beta diversity, second to identify batch effects, and lastly to determine project effects
+
+```{r setup, eval=TRUE, echo=TRUE, message=FALSE,warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(tidyverse)
+library(phyloseq)
+library(ggpubr)
+library(rstatix)
+library(vegan)
+library(ape)
+library(kableExtra)
+
+# Create used folders if missing
+if (!file.exists("R_objects")) dir.create(file.path(getwd(), "R_objects"))
+if (!file.exists("plots")) dir.create(file.path(getwd(), "plots"))
+if (!file.exists("tables")) dir.create(file.path(getwd(), "tables"))
+if (!file.exists("scripts")) dir.create(file.path(getwd(), "scripts"))
+
+# Save params
+saveRDS(params, file = "R_Objects/bdiv_params.RDS")
+```
+
+## SCRIPTS {.tabset .tabset-fade .tabset-pills}
+
+### INFO
+
+This section contains the scripts for the custom functions used in this pipeline
+
+### MULTIPLE RAREFY
+
+Here is a function that rarefies each sample of a phyloseq object, calculates the distance between them, and chooses the most central as a representative sample for any following analyses.
+
+```{r multiple_rarefy_function, eval=TRUE}
+multiple_rarefy <- function(physeq, ntables=100, depth = min(rowSums(rawtab))*0.9, distmethod="bray", summarymeasure=mean, seedstart=500, verbose=TRUE) {
+  require("vegan")
+  # Orientate the OTU correctly
+  if (taxa_are_rows(physeq)){rawtab<-unclass(t(otu_table(physeq)))} else rawtab <- unclass(otu_table(physeq))
+  
+  # Ignore samples below rarefaction depth
+  ind <- (rowSums(rawtab) < depth)
+  sam.discard <- rownames(rawtab)[ind]
+  otu.tab <- rawtab[!ind, ]
+  
+  # Rarefaction function
+  rarefy <- function(x, depth) {
+    y <- sample(rep(1:length(x), x), depth)
+    y.tab <- table(y)
+    j <- numeric(length(x))
+    j[as.numeric(names(y.tab))] <- y.tab
+    j
+  }
+  
+  # Table to output rarefied data
+  final_tab = c()
+  
+  # Run each sample separately
+  for (z in 1:nrow(otu.tab)) {
+    if (verbose==TRUE) {
+      print(paste("Rarefaction sample number", z, sep=" "))
+    }
+    numbers <- otu.tab[z,]
+    
+    # Rarefy the sample ntables times
+    set.seed(seedstart + z)
+    rare_tab <- lapply(1:ntables,function(k) rarefy(numbers,depth))
+    
+    rare_tab <- do.call(rbind, rare_tab)
+    # # Remove columns with no reads
+    # rare_tab_no_zero <- rare_tab[,colSums(rare_tab) != 0]
+    # # distance across reps for subject z
+    distmat = as.matrix(vegdist(rare_tab, method=distmethod)) 
+    # calculate mean distance for each rep 
+    distsummary = apply(distmat, 2, summarymeasure)
+    # the best rep is the one with the mean distance to all other reps. (in case of ties, just select the first)
+    whichbestrep = which(distsummary == min(distsummary))[1]  
+    # select that rep only for subject z
+    bestrep = rare_tab[whichbestrep,]
+    # build that rep for subject y into final table
+    final_tab = rbind(final_tab, bestrep) 
+  }
+  
+  # Remove samples with too few reads
+  physeq <- prune_samples(!sample_names(physeq) %in% sam.discard, physeq) 
+  # Reformat final tab and return to the physeq object
+  rownames(final_tab) = rownames(otu.tab)
+  colnames(final_tab) = colnames(otu.tab)
+  otu_table(physeq) <- otu_table(t(final_tab), taxa_are_rows = T)
+  
+  # Return physeq to the environment
+  return(physeq)
+}
+
+# save functions
+save(multiple_rarefy, file = "scripts/mrarefy.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+## CALCULATE BETA DIVERSITY {.tabset .tabset-fade .tabset-pills}
+
+I will calculate for both weighted UniFrac distances and Bray-Curtis dissimilarity index. Both indeces normalises pairwise distances/dissimilarities to be between 0 and 1, which means that while the distance between two samples will always be the same, the numerical value will depend on all the samples analysed together. Other metrics/indeces can be used, and might be relevant, but just keep in mind how the specific indeces are relevant for the interpretation of the following results.
+
+### CREATE RAREFIED PHYLOSEQ OBJECT
+
+Most beta diversity metrics that are based on presence/absence of bacteria are sensitive to differences in sequencing depth. The way to minimize such bias is to perform rarefaction of the data, but as rarefaction is random this introduces yet another bias. Here we will rarefy each sample multiple times and choose the most central as a representative rarefication.
+
+```{r calc_multiple_rarefy, eval=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+load("scripts/mrarefy.Rdata")
+
+# Load phyloseq
+load(params$input)
+
+# Perform multiple rarefactions
+phy.rare <- multiple_rarefy(phy)
+
+# Remove empty taxa
+phy.rare <- prune_taxa(taxa_sums(phy.rare) > 0, phy.rare)
+
+# Root tree
+phy_tree(phy) <- ape::root(phy_tree(phy), sample(taxa_names(phy), 1), resolve.root = TRUE)
+
+# Save object
+save(phy.rare, file = "R_objects/Phyloseq_rarefied.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+```
+
+### UNWEIGHTED UNIFRAC
+
+The unique fraction metric, or UniFrac, measures the phylogenetic distance between sets of taxa in a phylogenetic tree as the fraction of the branch length of the tree that leads to descendants from either one environment or the other, but not both [(Lozupone & Knight, 2005)](https://doi.org/10.1128/AEM.71.12.8228-8235.2005). 
+This metric is sensitive to sequencing depth, so it is required to use a rarefied phyloseq object
+The UniFrac algorithm requires a rooted tree, so if ASVs has been removed from the raw da the tree should be rerooted manually, else a random ASV will be chosen as root.
+
+```{r calc_UniF, eval=FALSE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load("R_objects/Phyloseq_rarefied.Rdata")
+load("scripts/mrarefy.Rdata")
+
+# Root tree if necessary
+if (!is.rooted(phy_tree(phy.rare))) phy_tree(phy.rare) <- ape::root(phy_tree(phy.rare), sample(taxa_names(phy.rare), 1), resolve.root = TRUE)
+
+# Calculate UniFrac distances
+unif.dist <- UniFrac(phy.rare, weighted = FALSE, parallel = FALSE)
+
+# Calculate PCoA data
+unif.pcoa <- ordinate(phy.rare, method = "PCoA",distance = unif.dist)
+unif.nmds <- metaMDS(unif.dist, k = 5, trymax = 1000)
+
+# Save distance objects
+save(unif.dist, unif.nmds, unif.pcoa, file = "R_objects/UniF.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE))
+invisible(gc())
+
+```
+
+### WEIGHTED UNIFRAC
+
+The unique fraction metric, or UniFrac, measures the phylogenetic distance between sets of taxa in a phylogenetic tree as the fraction of the branch length of the tree that leads to descendants from either one environment or the other, but not both [(Lozupone & Knight, 2005)](https://doi.org/10.1128/AEM.71.12.8228-8235.2005). 
+Weighted UniFrac takes the abundance of each ASV into account instead of just presence/absence, which means that it will not be sensitive to sequencing depth. The UniFrac algorithm requires a rooted tree, so if ASVs has been removed from the raw da the tree should be rerooted manually, else a random ASV will be chosen as root.
+
+```{r calc_wUniF, eval=FALSE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load(params$input)
+
+# Root tree if necessary
+if (!is.rooted(phy_tree(phy))) phy_tree(phy) <- ape::root(phy_tree(phy), sample(taxa_names(phy), 1), resolve.root = TRUE)
+
+# Calculate UniFrac distances
+wuf.dist <- UniFrac(phy, weighted = TRUE, parallel = FALSE)
+
+# Calculate PCoA data
+wuf.pcoa <- ordinate(phy, method = "PCoA",distance = wuf.dist)
+wuf.nmds <- metaMDS(wuf.dist, k = 5, trymax = 1000)
+
+# Save distance objects
+save(wuf.dist, wuf.nmds, wuf.pcoa, file = "R_objects/wUniF.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE))
+invisible(gc())
+
+```
+
+### BRAY-CURTIS
+
+Bray-Curtis dissimilarity index (as implemented by the vegan package) is the sum of abundance difference for each species/ASV, divided by theoretical maximum difference between the samples if no ASV overlapped. The formula used is: $$d_{jk} = \frac{\sum|n_{ij}-n_{ik}|}{\sum(n_{ij}+n_{ik})}$$ Bray-Curtis dissimilarity is not a true distance metric as it does not adhere to the [triangle inequality](), but is often used to compare microbiomes. Bray-Curtis dissimilarities are based on the assumption that measurements are taken from equal areas, so differences in total counts between samples will bias the metric. As differences in sequences depth is due to differences in the lab procedures and not biological differences, we should transform our counts to relative abundances before calculating Bray-Curtis dissimilarities. By transforming the data to abundances no data is lost, but rarefied data can also be used.
+
+```{r calc_bray, eval=FALSE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load(params$input)
+
+# transform counts
+phy.ra <- transform_sample_counts(phy, function(x) x/sum(x))
+
+# Calculate Bray-Curtis dissimilarities
+bray.dist <- distance(phy.ra, method = "bray",)
+
+# Calculate PCoA data
+bray.pcoa <- ordinate(phy, method = "PCoA",distance = bray.dist)
+bray.nmds <- metaMDS(bray.dist, k = 5, trymax = 1000)
+
+# Save distance objects
+save(bray.dist, bray.nmds, bray.pcoa, file = "R_objects/Bray.RData")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE))
+invisible(gc())
+
+```
+
+## BATCH EFFECTS {.tabset .tabset-fade .tabset-pills}
+
+For the betadiversity we will also have to test for batch effects, and if they are significant, correct for them when performing the project relevant analyses.
+I will test each diversity index individually, so if additional indeces have been included, just copy and and adapt the following sections
+
+### UNIFRAC
+
+```{r batch_UniF, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load("R_objects/Phyloseq_rarefied.Rdata")
+load("R_objects/UniF.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy.rare))
+
+# Run PERMANOVA for batch variable
+FORMULA <- as.formula(paste("unif.dist ~ ", params$batch, sep = ""))
+batch.PERM <- adonis2(FORMULA, data = mdat)
+
+# Compare the betadiversity dispertion for the batch variable
+batch.bdisp <- betadisper(unif.dist, mdat[,params$batch])
+anova(batch.bdisp)
+
+# If significant a post hoc test can compare pairwise
+TukeyHSD(batch.bdisp)
+
+plot(batch.bdisp)
+boxplot(batch.bdisp)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### WEIGHTED UNIFRAC
+
+```{r batch_WUF, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load(params$input)
+load("R_objects/wUniF.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+
+# Run PERMANOVA for batch variable
+FORMULA <- as.formula(paste("wuf.dist ~ ", params$batch, sep = ""))
+batch.PERM <- adonis2(FORMULA, data = mdat)
+
+# Compare the betadiversity dispertion for the batch variable
+batch.bdisp <- betadisper(wuf.dist, mdat[,params$batch])
+anova(batch.bdisp)
+
+# If significant a post hoc test can compare pairwise
+TukeyHSD(batch.bdisp)
+
+plot(batch.bdisp)
+boxplot(batch.bdisp)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+
+### BRAY-CURTIS
+
+```{r batch_Bray, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+# load
+load(params$input)
+load("R_objects/Bray.RData")
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+
+# Run PERMANOVA for batch variable
+FORMULA <- as.formula(paste("bray.dist ~ ", params$batch, sep = ""))
+batch.PERM <- adonis2(FORMULA, data = mdat)
+
+# Compare the betadiversity dispertion for the batch variable
+batch.bdisp <- betadisper(bray.dist, mdat$Run)
+anova(batch.bdisp)
+
+# If significant a post hoc test can compare pairwise
+TukeyHSD(batch.bdisp)
+
+plot(batch.bdisp)
+boxplot(batch.bdisp)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+
+```
+
+### INTERPRETATION
+
+There were no significant batch dependent differences in beta diversity, so luckily no batch effects to consider in any following analyses. If there had been any significant effect, then the relevant variable should be included in all following analyses.
+
+# CATEGORICAL VARIABLES EFFECTS {.tabset .tabset-fade .tabset-pills}
+
+I will run a full test of one categorical variable and one distance metric. To run for another METRIC/VARIABLE, just copy this complete section (until you reach "CONTINOUS VARIABLES EFFECT"), modify the initial METRIC AND VAR, and then run.
+**REMEMBER** you must update the name of each codechunk as the names have to be unique.
+
+## LOAD DATA
+This first part loads the data and defines betadiversity metric and tested variable for the following blocks
+
+```{r beta_load_categorical, eval=TRUE, echo=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+
+# Choose metric
+METRIC <- "UniF"
+
+# Choose variable 
+VAR <- "Week_clean"
+
+# Load data
+load(params$input)
+
+if (METRIC == "UniF") {
+  load("R_objects/UniF.RData")
+  dist.used <- unif.dist
+  nmds.used <- unif.nmds
+  pcoa.used <- unif.pcoa
+  rm(unif.dist, unif.nmds, unif.pcoa)
+} else if (METRIC == "wUnif") {
+  load("R_objects/wUniF.RData")
+  dist.used <- wuf.dist
+  nmds.used <- wuf.nmds
+  pcoa.used <- wuf.pcoa
+  rm(wuf.dist, wuf.nmds, wuf.pcoa)
+} else if (METRIC == "Bray"){
+  load("R_objects/Bray.RData")
+  dist.used <- bray.dist
+  nmds.used <- bray.nmds
+  pcoa.used <- bray.pcoa
+  rm(bray.dist, bray.nmds, bray.pcoa)
+}
+
+# Extract metadata from phyloseq
+mdat <- data.frame(sample_data(phy))
+
+# If a variable consist of numbers, but represent distinct groups remember to make it into a factor
+mdat[,VAR] <- as.factor(mdat[,VAR])
+```
+
+## STATISTICAL TEST
+
+This block contains the statistical test of the categorical variable
+
+```{r beta_categorical_test, eval = TRUE}
+# Compare the betadiversity dispertion for Weighted UniFrac
+bdisp <- betadisper(dist.used, mdat[,VAR], bias.adjust=TRUE)
+anova(bdisp)
+
+# dispertion by group
+boxplot(bdisp)
+
+# Test which groups differ (only if the anova test was significant)
+(HSD <- TukeyHSD(bdisp))
+plot(HSD)
+
+# Run PERMANOVA for the variable
+FORMULA <- as.formula(paste("dist.used ~", VAR, sep = " "))
+(perm.test <- adonis2(FORMULA, data = mdat, permutations = 9999,na.action = na.omit))
+
+# Use vegan to test how well metadata fits ordination
+fit.out <- envfit(nmds.used, mdat[,c("Week_clean","DNA_Conc")],na.rm=TRUE)
+fit.out
+```
+
+## BETA DIVERSITY PLOTS {.tabset .tabset-fade .tabset-pills}
+
+The data from an ordination can be plotted in many different ways. Here I will look at the importance of each axis in the PCoA plot, perform standard 2D-ordination plots, and plot dispertion for each variable.
+
+### EIGENVALUES
+
+For PCoA each axis represent a specific amount of the overall variation in the dataset. this information can easily be extracted and plotted.
+
+```{r plot_eigenvalues, eval=TRUE, echo=TRUE}
+
+# Extract eigen values
+eigen <- pcoa.used$values
+eigen$Axis <- as.numeric(row.names(eigen))
+
+# Create plots for both distance indeces
+p.eigen <- ggplot(eigen[1:10,], aes(x = as.factor(Axis), y = 100*Rel_corr_eig)) + 
+  geom_col(aes(fill = as.factor(Axis))) +
+  geom_point(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  geom_line(aes(x = Axis, y = 100*Cum_corr_eig)) +
+  ylab("Variance explained (%)") +
+  xlab("Axis") +
+  theme_pubr(legend = "none") + ggsci::scale_fill_jco()
+p.eigen + ggtitle(paste("Variance per axis for", METRIC, sep = " "))
+suppressMessages(ggsave(plot = p.eigen, filename = paste0("plots/bdiv_PCoA_axis",METRIC,".png"), device = "png"))
+
+```
+
+### ORDINATION
+
+Phyloseq has a plotting function, but it is a bit limited in some of the settings. Therefore, I recommend to use the function to create a table of the data and then make your own plots
+The first plot highlights the location of each group on the first 5 axis. Based on this an optimal set of axis can be chosen for the following ordination plot.
+
+```{r ordination_categorical, eval=TRUE}
+# Create plots of eigenvalues for PCoA plots
+pcoa.tab <- plot_ordination(phy, pcoa.used,axes = 1:5,justDF = TRUE)
+nmds.tab <- plot_ordination(phy, nmds.used,axes = 1:5,justDF = TRUE)
+
+# Reformat tables to create one common table
+colnames(nmds.tab)[1:5] <- c("Axis.1","Axis.2","Axis.3","Axis.4","Axis.5")
+
+nmds.tab$ordination <- "nmds"
+pcoa.tab$ordination <- "pcoa"
+
+ord.tab <- rbind(nmds.tab,pcoa.tab)
+ord.tab$Week_clean <- as.factor(ord.tab$Week_clean)
+
+# Melt axis to be in one variable
+axis.tab <- pivot_longer(data = ord.tab, cols = c("Axis.1","Axis.2","Axis.3","Axis.4","Axis.5"), names_to = "Axis", values_to = "position")
+
+# Plot positions on axes
+ggplot(axis.tab, aes_string(x = "ordination", y = "position", fill = VAR)) +
+  geom_boxplot() +
+  facet_grid(Axis~.) +
+  coord_flip() + 
+  theme_pubr(legend = "bottom") + ggsci::scale_fill_jco()
+
+# Create ordination plots
+plot.beta <- ggplot(ord.tab[!is.na(ord.tab[,VAR]),], aes_string(x = "Axis.1", y = "Axis.2", color = VAR)) +
+  geom_point() + 
+  facet_grid(.~ordination, scales = "free") + 
+  theme_pubr(legend = "bottom") + 
+  labs(color=VAR) +
+  stat_ellipse() #+ ggsci::scale_color_jco()
+plot.beta
+```
+
+### FIT VARIABLES TO ORDINATION
+```{r envfit, eval=TRUE}
+
+# extract arrows
+arrows <- data.frame(fit.out$vectors$arrows)
+colnames(arrows) <- c("xend","yend")
+arrows$length <- sqrt(fit.out$vectors$r)
+
+arrows$x = 0
+arrows$y = 0
+arrows$xend <- with(arrows, xend*length)
+arrows$yend <- with(arrows, yend*length)
+
+# Add arrows to plot
+ggplot(ord.tab[!is.na(ord.tab[,VAR]),], aes_string(x = "Axis.1", y = "Axis.2")) +
+  geom_point(aes(color = VAR)) + 
+  facet_grid(.~ordination, scales = "free") + 
+  theme_pubr(legend = "bottom") + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend, color = "red"), data = arrows, arrow = arrow(type = "closed", length = unit(0.1, "inches")),show.legend = FALSE) + geom_text(data = arrows, aes(x = xend/2, y = yend/2, label = row.names(arrows), color = "red"), show.legend = F)
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
+invisible(gc())
+```
+
+# REDUNDANCY ANALYSIS {.tabset .tabset-fade .tabset-pills}
+
+**This part is missing and will be added later**
+
+# SETTINGS {.tabset .tabset-fade .tabset-pills}
+
+Overview of the parameters and packages that were used for this analysis
+
+## PARAMETERS
+
+The following paramenters were set in for this analysis:
+
+```{r parameters, eval=TRUE}
+params <- readRDS("R_objects/bdiv_params.RDS")
+
+tmp <- unlist(params)
+dat <- data.frame(Parameter = names(tmp), Value = unname(tmp))
+
+
+kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
+
+```
+
+## PACKAGES
+
+The analysis was run in R version `r getRversion()` using the following packages:
+
+```{r packages, eval=TRUE}
+pack <- data.frame(Package = (.packages()))
+
+for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$Package[i]))
+
+kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
+     
+```
