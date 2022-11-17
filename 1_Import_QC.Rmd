@@ -19,6 +19,7 @@ params:
     meta: "input/CEFTA_metadata.csv"
     neg: "Water|Neg|NC|ctrl"
     batch: "Run"
+    indeces: "Observed|Shannon|FaithPD|Chao1"
 ---
 
 # GMH ASV ANALYSIS PIPELINE
@@ -656,7 +657,7 @@ Rarefaction curve for individual samples:
 Rarefaction curve grouped by sample type and batch:
 ![Rarefaction_curves_grouped](plots/Rcurve_grouped_harsh.png){width="100%"}
 
-## CREATE CLEAN PHYLOSEQ OBJECTS
+## CLEAN PHYLOSEQ OBJECTS
 
 After using decontaminate and evaluating the mock communities we can now create a phyloseq object with just the project samples.
 
@@ -687,13 +688,59 @@ rm(list = ls(all.names = TRUE))
 invisible(gc())
 ```
 
-This completes data import, initial cleaning, and QC of the sequencing data. The data stored in "R_objects/Phyloseq.Rdata" can be used as backup later. The created phyloseq objects can now be used for further analysis in the scripts for:
+# CALCULATE ALPHA DIVERSITY
 
-    | Analysis                | Script               |
-    |-------------------------|----------------------|
-    | Alpha diversity         | 2_AlphaDiversity.Rmd |
-    | Beta diversity          | 3_BetaDiversity.Rmd  |
-    | Differential abundance  | 4_DA.Rmd             |
+There is randomness involved in performing rarefaction (random subsampling). To minimize any effect of this randomness it is recommended to use the mean of multiple rarefactions instead of just relying on just one random subsampling. Not rarefying a sample can create a bias, so to avoid this I will rarefy all samples to 90% of the lowest sample depth (default setting). As this will be done for just one sequencing depth and we need the results to be consistent default setting is to rarefy 100 times. The function will produce a data.frame with sample metadata and the mean and standard deviation for each sample using the methods set prior.
+
+```{r alpha_div_calc, eval=FALSE}
+
+# Load functions
+load("scripts/adiv.Rdata")
+params <- readRDS(file = "R_objects/import_params.RDS")
+
+# Set indeces
+INDECES <- as.vector(str_split(params$indeces,pattern = "\\|",simplify = TRUE))
+
+## First phyloseq object
+# load data
+load("R_objects/Phyloseq.Rdata")
+
+# Calculate data
+adat <- Calculate_alpha_div(phy, methods = INDECES)
+
+# Add data to phyloseq object
+sample_data(phy) <- adat
+
+# Save the phyloseq object
+save(phy, INDECES, file="R_objects/Phyloseq.Rdata")
+
+## Harsh phyloseq object
+# load data
+load("R_objects/Phyloseq_harsh.Rdata")
+
+# Calculate data
+adat <- Calculate_alpha_div(phy, methods = INDECES)
+
+# Add data to phyloseq object
+sample_data(phy) <- adat
+
+# Save the phyloseq object
+save(phy, INDECES, file="R_objects/Phyloseq_harsh.Rdata")
+
+# clear the environment and release memory
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
+invisible(gc()) #free up memory and report the memory usage.
+
+```
+
+# FINAL COMMENT
+This completes data import, initial cleaning, QC of the sequencing data, and calculation of alpha diversity. The data stored in "R_objects/Phyloseq.Rdata" and "R_objects/Phyloseq_harsh.Rdata". The phyloseq objects can now be used for further analysis in the scripts for:
+
+    | Analysis                    | Script                    |
+    |-----------------------------|---------------------------|
+    | Statistical testing         | 2_Statistical_testing.Rmd |
+    | Beta diversity              | 3_BetaDiversity.Rmd       |
+    | Differential abundance      | 4_DA.Rmd                  |
 
 # SETTINGS {.tabset .tabset-fade .tabset-pills}
 
@@ -714,15 +761,10 @@ kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
 
 ```
 
-## PACKAGES
+## SESSION INFO
 
-The analysis was run in R version `r getRversion()` using the following packages:
+The analysis was run in the following environment:
 
 ```{r packages, eval=TRUE}
-pack <- data.frame(Package = (.packages()))
-
-for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$Package[i]))
-
-kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
-     
+sessionInfo()
 ```

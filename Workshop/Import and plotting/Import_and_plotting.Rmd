@@ -13,7 +13,7 @@ output:
 ## Global options
 knitr::opts_chunk$set(cache = TRUE)
 library(tidyverse)
-
+library(plotly)
 ```
 
 # Data
@@ -141,15 +141,13 @@ When creating plots with baseplots many variables are set with a numerical value
 
 It is also possible to create complex plots with base R plotting, but the code can become very complex
 
-```{r complex_plot, eval=TRUE}
+```{r complex_plot, eval=TRUE, error=TRUE}
 ## Complex baseplot
 pirates <- read_csv("pirates.csv")
 # Create layout matrix
 layout.matrix <- matrix(c(2, 1, 0, 3), nrow = 2, ncol = 2)
 
-layout(mat = layout.matrix,
-       heights = c(1, 2), # Heights of the two rows
-       widths = c(2, 2))
+layout(mat = layout.matrix, heights = c(1, 2), widths = c(2, 2))
 
 # Put plots together
 # Set plot layout
@@ -272,7 +270,7 @@ p + geom_violin()
 p + geom_violin() + geom_jitter()
 p + geom_jitter() + geom_violin()
 p + geom_jitter() + geom_violin() + geom_boxplot()
-p + geom_violin() + geom_boxplot() + geom_jitter()
+ggplotly(p + geom_violin() + geom_boxplot() + geom_jitter())
 
 ```
 

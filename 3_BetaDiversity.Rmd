@@ -535,15 +535,10 @@ kbl(dat, row.names = F) %>% kable_classic(lightable_options = "striped")
 
 ```
 
-## PACKAGES
+## SESSION INFO
 
-The analysis was run in R version `r getRversion()` using the following packages:
+The analysis was run in the following environment:
 
 ```{r packages, eval=TRUE}
-pack <- data.frame(Package = (.packages()))
-
-for (i in seq(nrow(pack))) pack$Version[i] <- as.character(packageVersion(pack$Package[i]))
-
-kbl(pack[order(pack$Package),], row.names = F) %>% kable_classic(lightable_options = "striped")   
-     
+sessionInfo()
 ```
