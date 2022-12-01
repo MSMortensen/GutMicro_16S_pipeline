@@ -18,8 +18,7 @@ knit: (function(inputFile, encoding) {
 
 # STATISTICAL TESTING {.tabset .tabset-fade .tabset-pills}
 
-This Rmarkdown should be used to explore the metadata for a project, identify the relevant statistical tests to run on which variables, as well as perform those tests.
-The theory is copied from "[Choosing the Right Statistical Test \| Types & Examples (scribbr.com)](https://www.scribbr.com/statistics/statistical-tests/)" with the methods following the included recommendations.
+This Rmarkdown should be used to explore the metadata for a project, identify the relevant statistical tests to run on which variables, as well as perform those tests. The theory is copied from "[Choosing the Right Statistical Test \| Types & Examples (scribbr.com)](https://www.scribbr.com/statistics/statistical-tests/)" with the methods following the included recommendations.
 
 This document can also be used to test all non microbiome data.
 
@@ -41,7 +40,6 @@ if (!file.exists("tables")) dir.create(file.path(getwd(), "tables"))
 if (!file.exists("scripts")) dir.create(file.path(getwd(), "scripts"))
 
 ```
-
 
 ## THEORY
 
@@ -159,22 +157,22 @@ Comparison tests look for **differences among group means**. They can be used to
 
 These can be used to test whether two variables you want to use in (for example) a multiple regression test are autocorrelated.
 
-+----------------+----------------------------+-------------------------------------------+
-|                | Variables                  | Research question example                 |
-+:===============+:==========================:+:=========================================:+
-| Pearson\'s *r* | -   2 continuous variables | How are latitude and temperature related? |
-+----------------+----------------------------+-------------------------------------------+
++---------------+----------------------------+-------------------------------------------+
+|               | Variables                  | Research question example                 |
++:==============+:==========================:+:=========================================:+
+| Pearson's *r* | -   2 continuous variables | How are latitude and temperature related? |
++---------------+----------------------------+-------------------------------------------+
 
 #### **Nonparametric test alternatives**
 
-Non-parametric tests don\'t make as many assumptions about the data, and are useful when one or more of the common statistical assumptions are violated. However, the inferences they make aren\'t as strong as with parametric tests.
+Non-parametric tests don't make as many assumptions about the data, and are useful when one or more of the common statistical assumptions are violated. However, the inferences they make aren't as strong as with parametric tests.
 
 +---------------------------------+----------------------+--------------------------------------------+---------------------+
 |                                 | Predictor variable   | Outcome variable                           | Use in place of...  |
 +:================================+:====================:+:==========================================:+:===================:+
-| Spearman\'s *r*                 | -   Quantitative     | -   Quantitative                           | Pearson\'s *r*      |
+| Spearman's *r*                  | -   Quantitative     | -   Quantitative                           | Pearson's *r*       |
 +---------------------------------+----------------------+--------------------------------------------+---------------------+
-| Chi square test of independence | -   Categorical      | -   Categorical                            | Pearson\'s *r*      |
+| Chi square test of independence | -   Categorical      | -   Categorical                            | Pearson's *r*       |
 +---------------------------------+----------------------+--------------------------------------------+---------------------+
 | Sign test                       | -   Categorical      | -   Quantitative                           | One-sample *t*-test |
 +---------------------------------+----------------------+--------------------------------------------+---------------------+
@@ -204,19 +202,19 @@ First we have to ensure that the variables we are testing are independent of eac
 ```{r load_data, eval = TRUE}
 
 # Load phyloseq metadata
-load("R_objects/Phyloseq.Rdata")
+load("R_objects/Phyloseq_harsh.Rdata")
 dat <- as_tibble(sample_data(phy))
 
 # Load data from table using readr (File > Import Dataset > From Text (readr)...) and paste the code here
 dat <- read_delim("C:/Users/masmo/Documents/GitHub/CAMIT/input/CAMIT_Metadata.tsv",
                   delim = "\t", escape_double = FALSE, trim_ws = TRUE)
 
+save(dat, file = "R_objects/stat_test_dat.RData")
 ```
 
 #### Categorical variables
 
-Categorical variables should be compared using **Chi squared test of independence**.
-When testing categorical data it is important that they are formatted as factors. This is especially true for variables that can be misinterpreted as being numerical.
+Categorical variables should be compared using **Chi squared test of independence**. When testing categorical data it is important that they are formatted as factors. This is especially true for variables that can be misinterpreted as being numerical.
 
 ```{r cat_var_cor, eval = TRUE}
 
@@ -245,6 +243,7 @@ cat_var %>%
     )
 
 ```
+
 If any correlations are significant, both variables cannot be included in the same test
 
 #### Quantitative variables
@@ -268,8 +267,7 @@ the variance within each group being compared is similar among all groups. If on
 
 ### Normality of data
 
-:** the data follows a normal distribution (a.k.a. a bell curve). This assumption applies only to quantitative data.
-
+:\*\* the data follows a normal distribution (a.k.a. a bell curve). This assumption applies only to quantitative data.
 
 ## CATEGORICAL VARIABLES EFFECTS {.tabset .tabset-fade .tabset-pills}
 
@@ -281,18 +279,17 @@ Here is code to test alpha diversity for a single categorical variable. To chang
 
 ```{r alpha_div_Week_independence, eval=TRUE}
 
-params <- readRDS("R_objects/Adiv_params.RDS")
 # Load data
-load("R_objects/AlphaDiversity.RData")
+load("R_objects/stat_test_dat.RData")
 TEST.VAR <- "Week_clean"
 
 # Remove samples with incomplete metadata
-adat <- adat[!is.na(adat[,TEST.VAR]),]
-adat[,TEST.VAR] <- as.factor(adat[,TEST.VAR])
+dat <- dat[!is.na(dat[,TEST.VAR]),]
+dat[,TEST.VAR] <- as.factor(dat[,TEST.VAR])
 
 ### Determine if any batch effect might influence your data
 # Calculate distribution counts
-freq.t <- with(adat, table(Run, Week_clean, exclude = NULL))
+freq.t <- with(dat, table(Run, Week_clean, exclude = NULL))
 freq.t
 
 # Determine distribution percentages
@@ -307,15 +304,15 @@ As there is no significant interaction identified by the chi^2^-test, we can ign
 ```{r alpha_div_Week_test, eval=TRUE, fig.cap="Boxplot of alpha diversity"}
 ################################################################################
 
-adat <- adat[adat$FMT == 1,]
+dat <- dat[dat$FMT == 1,]
 #### Test project variable
 ### Observed richness
 FORMULA <- as.formula(paste("Observed ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -334,7 +331,7 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
 }
 
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "Observed",
+p <- ggboxplot(dat, x = TEST.VAR, y = "Observed",
           color = TEST.VAR, palette = "jco",
           add = "jitter")
 
@@ -343,11 +340,11 @@ p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 ### Test shannon diversity index
 # Run statistical test of batch effect
 FORMULA <- as.formula(paste("Shannon ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -365,17 +362,17 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
     mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
 }
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "jco", add = "jitter")
+p <- ggboxplot(dat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "jco", add = "jitter")
 
 p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 # Test Faith phylogenetic distance
 FORMULA <- as.formula(paste("FaithPD ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -394,7 +391,7 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
 }
 
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "FaithPD",
+p <- ggboxplot(dat, x = TEST.VAR, y = "FaithPD",
           color = TEST.VAR, palette = "jco",
           add = "jitter")
 
@@ -417,18 +414,17 @@ Here is code to test alpha diversity for a single variable.
 
 ```{r alpha_div_outcome_independence, eval=TRUE}
 
-params <- readRDS("R_objects/Adiv_params.RDS")
 # Load data
-load("R_objects/AlphaDiversity.RData")
+load("R_objects/stat_test_dat.RData")
 TEST.VAR <- "Outcome2"
 
 # Remove samples with incomplete metadata
-adat <- adat[!is.na(adat[,TEST.VAR]),]
-adat[,TEST.VAR] <- as.factor(adat[,TEST.VAR])
+dat <- dat[!is.na(dat[,TEST.VAR]),]
+dat[,TEST.VAR] <- as.factor(dat[,TEST.VAR])
 
 ### Determine if any batch effect might influence your data
 # Calculate distribution counts
-freq.t <- with(adat, table(Run, Week_clean, exclude = NULL))
+freq.t <- with(dat, table(Run, Week_clean, exclude = NULL))
 freq.t
 
 # Determine distribution percentages
@@ -446,11 +442,11 @@ As there is no significant interaction identified by the chi^2^-test, we can ign
 #### Test project variable
 ### Observed richness
 FORMULA <- as.formula(paste("Observed ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -469,7 +465,7 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
 }
 
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "Observed",
+p <- ggboxplot(dat, x = TEST.VAR, y = "Observed",
           color = TEST.VAR, palette = "jco",
           add = "jitter")
 
@@ -478,11 +474,11 @@ p.obs <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 ### Test shannon diversity index
 # Run statistical test of batch effect
 FORMULA <- as.formula(paste("Shannon ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -500,17 +496,17 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
     mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
 }
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "jco", add = "jitter")
+p <- ggboxplot(dat, x = TEST.VAR, y = "Shannon", color = TEST.VAR, palette = "jco", add = "jitter")
 
 p.sdi <- p + stat_pvalue_manual(stat.sig, label = "p.adj.format",tip.length = 0)
 
 # Test Faith phylogenetic distance
 FORMULA <- as.formula(paste("FaithPD ~", TEST.VAR, sep = " "))
-compare_means(FORMULA,  data = adat, method = "kruskal")
+compare_means(FORMULA,  data = dat, method = "kruskal")
 
 ## If significant:
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   wilcox_test(FORMULA) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -529,7 +525,7 @@ if (sum(stat.test$p.adj.signif != "ns") == 0) {
 }
 
 # Create plot
-p <- ggboxplot(adat, x = TEST.VAR, y = "FaithPD",
+p <- ggboxplot(dat, x = TEST.VAR, y = "FaithPD",
           color = TEST.VAR, palette = "jco",
           add = "jitter")
 
@@ -552,28 +548,27 @@ Testing two variables are used when there is a nested aspect in the analysis, fo
 
 ```{r adiv_nested, eval = FALSE}
 
-params <- readRDS("R_objects/Adiv_params.RDS")
 # Load data
-load("R_objects/AlphaDiversity.RData")
+load("R_objects/stat_test_dat.RData")
 
-adat$Week_factor <- as.factor(adat$Week_clean)
+dat$Week_factor <- as.factor(dat$Week_clean)
 INNER.VAR <- "Outcome2"
 OUTER.VAR <- "Week_clean"
 
 # Remove samples with incomplete metadata
-adat <- adat[!is.na(adat[,INNER.VAR]) & !is.na(adat[,OUTER.VAR]),]
-adat[,OUTER.VAR] <- as.factor(adat[,OUTER.VAR])
-adat[,INNER.VAR] <- as.factor(adat[,INNER.VAR])
+dat <- dat[!is.na(dat[,INNER.VAR]) & !is.na(dat[,OUTER.VAR]),]
+dat[,OUTER.VAR] <- as.factor(dat[,OUTER.VAR])
+dat[,INNER.VAR] <- as.factor(dat[,INNER.VAR])
 
 #### Test project variable
 ### Observed richness
-fit <- aov(as.formula(paste("Observed ~", OUTER.VAR,"*",INNER.VAR, sep = " ")), data = adat)
+fit <- aov(as.formula(paste("Observed ~", OUTER.VAR,"*",INNER.VAR, sep = " ")), data = dat)
 anova(fit)
 TukeyHSD(fit)
 
 ## Calculate stats for inner variable
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   group_by(.data[[OUTER.VAR]]) %>%
   wilcox_test(as.formula(paste("Observed ~", INNER.VAR, sep = " "))) %>%
   adjust_pvalue(method = "BH") %>%
@@ -583,7 +578,7 @@ stat.test <- adat %>%
 
 ## Calculate stats for outer variable
 # Perform pairwise comparisons
-stat.test2 <- adat %>%
+stat.test2 <- dat %>%
   wilcox_test(as.formula(paste("Observed ~", OUTER.VAR, sep = " "))) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -594,7 +589,7 @@ stat.test2 <- adat %>%
 stat.test2$y.position <- max(stat.test$y.position)*1.1
 
 # Create plot
-p <- ggboxplot(adat, x = OUTER.VAR, y = "Observed",
+p <- ggboxplot(dat, x = OUTER.VAR, y = "Observed",
           color = INNER.VAR, palette = "jco",
           add = "jitter")
 
@@ -603,13 +598,13 @@ p.obs <- p + stat_pvalue_manual(stat.test, label = "p.adj.format",tip.length = 0
 p.obs <- p.obs + stat_pvalue_manual(stat.test2, label = "p.adj.format",tip.length = 0.02, step.increase = 0.1)
 
 ### Shannon diversity index
-fit <- aov(as.formula(paste("Shannon ~", OUTER.VAR,"*",INNER.VAR, sep = " ")), data = adat)
+fit <- aov(as.formula(paste("Shannon ~", OUTER.VAR,"*",INNER.VAR, sep = " ")), data = dat)
 anova(fit)
 TukeyHSD(fit)
 
 ## Calculate stats for inner variable
 # Perform pairwise comparisons
-stat.test <- adat %>%
+stat.test <- dat %>%
   group_by(.data[[OUTER.VAR]]) %>%
   wilcox_test(as.formula(paste("Shannon ~", INNER.VAR, sep = " "))) %>%
   adjust_pvalue(method = "BH") %>%
@@ -619,7 +614,7 @@ stat.test <- adat %>%
 
 ## Calculate stats for outer variable
 # Perform pairwise comparisons
-stat.test2 <- adat %>%
+stat.test2 <- dat %>%
   wilcox_test(as.formula(paste("Shannon ~", OUTER.VAR, sep = " "))) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance("p.adj") %>% 
@@ -630,7 +625,7 @@ stat.test2 <- adat %>%
 stat.test2$y.position <- max(stat.test$y.position)*1.1
 
 # Create plot
-p <- ggboxplot(adat, x = OUTER.VAR, y = "Shannon",
+p <- ggboxplot(dat, x = OUTER.VAR, y = "Shannon",
           color = INNER.VAR, palette = "jco",
           add = "jitter")
 
@@ -712,19 +707,18 @@ I do not have sufficient continous variables to test for interactions, but I wil
 
 ```{r cor_variables, eval=TRUE}
 
-params <- readRDS("R_objects/Adiv_params.RDS")
 # Load data
-load("R_objects/AlphaDiversity.RData")
+load("R_objects/stat_test_dat.RData")
 
 # create vector with the relevant variables (can also be subset by column indeces)
 CON.VARS <- INDECES
 
 # Plot all variables against each other
-pairs(adat[,CON.VARS], pch = 19,  cex = 0.5,
+pairs(dat[,CON.VARS], pch = 19,  cex = 0.5,
       lower.panel=NULL)
 
 # Run Pearson test
-(corrmat <- cor(adat[,CON.VARS], method = "pearson", use = "complete.obs"))
+(corrmat <- cor(dat[,CON.VARS], method = "pearson", use = "complete.obs"))
 
 # Create heatmap
 corrmat_rounded <- round(corrmat, 2)
@@ -750,8 +744,8 @@ ggplot(melted_corrmat_rounded, aes(x = Var1, y = Var2, fill = dist)) +
   coord_fixed()
 
 # The significance of any correlations can the be tested individually
-with(adat, cor.test(Chao1,Observed, method = "pearson", use = "complete.obs"))
-with(adat, cor.test(Chao1, DNA_Conc, method = "pearson", use = "complete.obs"))
+with(dat, cor.test(Chao1,Observed, method = "pearson", use = "complete.obs"))
+with(dat, cor.test(Chao1, DNA_Conc, method = "pearson", use = "complete.obs"))
 
 # clear the environment and release memory
 rm(list = ls(all.names = TRUE)[ls(all.names = TRUE) != "params"])
@@ -766,16 +760,15 @@ First step is to determine if the variables are normally distributed.
 
 ```{r Adiv_prelim, eval=TRUE}
 
-params <- readRDS("R_objects/Adiv_params.RDS")
 # Load data
-load("R_objects/AlphaDiversity.RData")
+load("R_objects/stat_test_dat.RData")
 
 # store variables
 INDEX <- "FaithPD"
 VAR <- "DNA_Conc"
 
 # Visualise data
-ggscatter(adat, x = VAR, y = INDEX, # basic plot
+ggscatter(dat, x = VAR, y = INDEX, # basic plot
           facet.by = params$batch, # This line can be commented out if alpha diversity is independent of batches
           add = "reg.line", conf.int = TRUE, # Adds a trendline with confidence interval
           cor.coef = TRUE, cor.method = "pearson") +  # performs a pearson test and show p-value 
@@ -784,9 +777,9 @@ ggscatter(adat, x = VAR, y = INDEX, # basic plot
 ### Preliminary test of assumptions
 ## Create Q-Q plots
 # Adiv plot
-Q.ind <- ggqqplot(adat,x = INDEX)
+Q.ind <- ggqqplot(dat,x = INDEX)
 # Variable plot
-Q.var <- ggqqplot(adat, x = VAR)
+Q.var <- ggqqplot(dat, x = VAR)
 
 filename <- paste0("plots/QQplot_",INDEX,"_",VAR,".png")
 QQplot <- ggarrange(Q.ind,Q.var, nrow = 1, labels = c("A)","B)"), common.legend = TRUE,legend = "bottom")
@@ -795,9 +788,9 @@ suppressMessages(ggsave(filename = filename, plot = QQplot, device = "png"))
 
 ## Test for normal distribution using Shapiro test
 # Shapiro-Wilk normality test for Adiv
-shapiro.test(adat[,INDEX])
+shapiro.test(dat[,INDEX])
 # Shapiro-Wilk normality test for Variable
-shapiro.test(adat[,VAR])
+shapiro.test(dat[,VAR])
 
 ```
 
@@ -818,12 +811,12 @@ If it looks like the data follows the trendline in the preliminary plot we shoul
 METHOD <- "spearman"
 
 # Run test
-cor.test(adat[,INDEX],adat[,VAR], method = METHOD)
+cor.test(dat[,INDEX],dat[,VAR], method = METHOD)
 
 # Create plot with correct correlation statistics
 filename <- paste0("plots/CORplot_",INDEX,"_",VAR,".png")
 
-ggscatter(adat, x = VAR, y = INDEX,
+ggscatter(dat, x = VAR, y = INDEX,
           facet.by = params$batch, # This line can be commented out if alpha diversity is independent of batches
           add = "reg.line", conf.int = TRUE, 
           cor.coef = TRUE, cor.method = METHOD)
@@ -857,4 +850,5 @@ The analysis was run in the following environment:
 ```{r packages, eval=TRUE}
 sessionInfo()
 ```
-```
+
+\`\`\`
