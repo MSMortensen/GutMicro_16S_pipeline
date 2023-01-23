@@ -1,0 +1,391 @@
+---
+title: "GutMicro Workshop - Data wrangling"
+author: "masmo"
+date: "2023-01-20"
+output:
+  rmdformats::readthedown:
+    toc_depth: 4
+    collapsed: false
+    code_folding: hide
+    number_sections: true
+    highlight: kate
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+library(tidyverse)
+library(dplyr)
+library(phyloseq)
+
+```
+
+# INTRO
+
+This workshop is about handling, rehaping, subsetting, and transforming data within the tidyverse framework The objective of this workshop is to give you a look at how data can be handled and the basic principles used.
+
+I will focus on data formatted as phyloseq objects, data.frames, and tibbles.
+
+This workshop will be solely focused on tidyverse functions ([tidyverse](https://www.tidyverse.org/)), and for all other scripts I will preferentially choose packages build around the tidyverse design philosophy, grammar, and data structures.
+
+## PREPARE DATA
+
+Here we prepare data that will be used in the workshop
+
+```{r}
+# load data
+data(GlobalPatterns)
+data(starwars)
+
+# Agglomerate to genus level
+GP.phy <- tax_glom(GlobalPatterns, taxrank = "Genus")
+
+# Melt to data.frame
+GP.dat <- psmelt(GP.phy)
+
+# save data
+save(starwars, GP.dat, GP.phy, file = "Data_wrangling_workshop.RData")
+```
+
+## PIPES
+
+I have to quickly introduce the concept of pipes, they are a fundamental part of the tidyverse and can make code a lot easier to follow instead of having to nest commands.
+These will be used more for selecting and transforming data, but this is just a quick example of how they can be used.
+
+```{r}
+
+# Initialize `x`
+x <- c(0.109, 0.359, 0.63, 0.996, 0.515, 0.142, 0.017, 0.829, 0.907)
+
+# Compute the logarithm of `x`, return suitably lagged and iterated differences, 
+# compute the exponential function and round the result
+round(exp(diff(log(x))), 1)
+
+# Perform the same computations on `x` as above
+x %>% 
+  log() %>%
+  diff() %>%
+  exp() %>%
+  round(1)
+```
+
+## GROUP BY
+
+Another very helpful function is the ability to group samples (rows) using the function **group_by()**.
+This makes dplyr functions consider each group as a separate tables without actually splitting the table.
+The grouping can be removed using **ungroup()** or **rowwise()**.
+
+![group samples](https://ohi-science.org/data-science-training/img/rstudio-cheatsheet-group_by.png){alt="group samples"}
+
+The ability to group will be used when relevant in the following sections
+
+# DATA FORMATS
+
+There are several ways to store information in R, the simplest is values, that has information of one type (numbers, integers, characters, vectors, or factors).
+
+More complex information is categorised as data and can be formatted as:
+
+-   **Lists**: each object in a list can be complex data (named, tables, matrices etc.).
+
+-   **Matrix**: table containing values of the same type, information can be subset or selected by the row/column number.
+
+-   **data.frame:** matrix-like structure whose columns may be of differing types.
+    Data can be subset or selected by row/column number or name.
+
+-   **tibble**: enhanced version of a data.frame of the class **tbl_df** which allows for some special behaviour (for example when printing)
+
+Lastly there are even more complex data formats build to support typical workflows.
+Of specific relevance is a phyloseq object which can bind together one of each of these objects
+
+-   **sample_data():** data.frame with information about samples with sample_names as row names and sample_variables as columns
+
+-   **otu_table():** matrix with abundance values with taxa_names as rows and sample_names as columns.
+
+-   **tax_table():** matrix with taxonomical classification of OTUs/ASVs with taxa_names as rows and taxrank as columns
+
+-   **phy_tree():** Phylogenetic tree with taxa_names as tips.
+
+-   **refseq():** XStringSet with representative sequences for each taxa_names.
+
+[![Phyloseq structure](http://www.plosone.org/article/info:doi/10.1371/journal.pone.0061217.g003/largerimage)](http://www.plosone.org/article/info:doi/10.1371/journal.pone.0061217.g003/largerimage)
+
+## LOOK AT DATA
+
+When working with data, first step is to see what you have and to get an overview we can either use the base R function **str()** or the enhanced tidyverse version **glimpse().**
+
+```{r}
+
+# a data.frame
+str(GP.dat)
+glimpse(GP.dat)
+
+# A tibble
+str(starwars[,1:11])
+glimpse(starwars)
+starwars
+
+# A phyloseq object
+str(GP.phy)
+glimpse(GP.phy)
+GP.phy
+
+```
+
+# SUBSETTING
+
+When creating subsets, there is no difference between data.frames and tibbles, so I will only use the **starwars** dataset.
+
+## COLUMNS
+
+Colums are subset using the function **select()**
+
+![subset variables](https://ohi-science.org/data-science-training/img/rstudio-cheatsheet-select.png)
+
+In addition to using specific names, we can use commands such as:
+
+-   **starts_with()**: Starts with an exact prefix.
+
+-   **ends_with():** Ends with an exact suffix.
+
+-   **contains():** Contains a literal string.
+
+-   **matches()**: Matches a regular expression.
+
+-   **num_range():** Matches a numerical range like x01, x02, x03.
+
+-   **where():** selects variables for which a function is true
+
+```{r}
+# Using select we have a few more options
+starwars %>% select(-c(films,vehicles,starships))
+starwars %>% select(name:hair_color)
+starwars %>% select(name,where(is.numeric))
+starwars %>% select(contains("a"))
+
+```
+
+## ROWS
+
+Rows are subset using the function **filter()**
+
+[![Subset samples](http://ohi-science.org/data-science-training/img/rstudio-cheatsheet-filter.png)](http://ohi-science.org/data-science-training/img/rstudio-cheatsheet-filter.png)
+
+The basic operation is done with logical operators
+
+| **Operator** | **Description**          |
+|--------------|--------------------------|
+| **\<**       | less than                |
+| **\<=**      | less than or equal to    |
+| **\>**       | greater than             |
+| **\>=**      | greater than or equal to |
+| **==**       | exactly equal to         |
+| **!=**       | not equal to             |
+| **!x**       | Not x                    |
+| **x \| y**   | x OR y                   |
+| **x & y**    | x AND y                  |
+| **%in%**     | is in a vector           |
+
+It is also possible to use functions such as **grepl()**, **str_ends()**, **str_starts(), is.na(),** or **duplicated()**
+
+```{r}
+# Using filter we have a few more options
+starwars %>% filter(str_ends(name, "ars"))
+starwars %>% filter(height > 200)
+starwars %>% filter(!is.na(hair_color))
+starwars %>% filter(grepl("blond",hair_color))
+
+# Use filter to see the heaviest of each type
+starwars %>% group_by(species) %>% filter(rank(mass) <= 2)
+```
+
+When working with phyloseq the same principles are used, but with different functions
+
+To subset samples we use **subset_samples()** or **prune_samples()**, and for taxa we use **subset_taxa()** or **prune_taxa()**.
+
+```{r}
+GP.phy
+
+# Samples
+GP.phy %>% subset_samples(SampleType == "Soil")
+prune_samples(grepl("A$", sample_data(GP.phy)$Final_Barcode), GP.phy)
+
+# Taxa
+GP.phy %>% subset_taxa(Phylum=="Bacteroidetes")
+prune_taxa(taxa_sums(GP.phy) > 100, GP.phy)
+```
+
+# MANIPULATE
+
+There are many ways to transform our data, we can create new variables [**mutate()**], sort our data [**arrange()**], summarize [**summary()**], and group [**group_by()**] our data
+
+## CREATE VARIABLE
+
+To calculate new variables we use the function **mutate()**
+
+![Create new variable](https://ohi-science.org/data-science-training/img/rstudio-cheatsheet-mutate.png)
+
+To calculate new variable and drop all others use **transmute()**
+
+```{r}
+
+# Perform simple calculations
+starwars %>% mutate(bmi = mass/(height/100)^2) %>% select(name, height, mass, bmi) %>% head
+
+# Apply functions
+starwars %>% mutate(mass_log10 = log10(mass)) %>% select(name, height, mass, mass_log10) %>% head
+
+# Calculate new variable and drom others
+starwars %>% transmute(bmi = mass/(height/100)^2, mass_log10 = log10(mass)) %>% head
+
+# Calculate relative abundances
+seqdat <- GP.dat %>% group_by(Sample) %>% mutate(abund_rel = Abundance/sum(Abundance)) 
+```
+
+## ORDER DATA
+
+We can sort the data to appear in a specific order using the function **arrange()**
+
+```{r}
+starwars %>% 
+  mutate(bmi = mass/(height/100)^2) %>% 
+  select(name, height, mass, bmi) %>% 
+  arrange(desc(bmi)) %>%
+  head
+```
+
+## SUMMARIZE DATA
+
+There can be many ways to summarize data, by counting or using a function (mean, sd, etc.).
+This is done with the function **summary()**
+
+![summarize data](https://ohi-science.org/data-science-training/img/rstudio-cheatsheet-summarise.png)
+
+```{r}
+starwars %>% 
+  group_by(species) %>% 
+  summarise(n = n(),
+            avg_height = mean(height, na.rm = T),
+            avg_weight = mean(mass, na.rm = T)) %>%
+  filter(n > 1 & !is.na(species))
+
+# Summarise our sequencing data 
+seqdat %>% filter(Abundance > 0) %>% group_by(Sample) %>% summarise(across(Phylum:Genus, n_distinct))
+
+```
+
+# TRANSFORM
+
+This part relates to joining/merging of two data frames into one and to changing the format of a data frame by pivoting between rows and columns.
+
+## JOIN
+
+When joining data we can simply stick the tables together by combining variables [**bind_cols()**] or cases/samples [**bind_rows()**], where the row and column order should match.
+I do not recommend ever doing this and will not show how to do it.
+
+Another, better, option is to join the tables using one of the many **X_join()** functions:
+
+-   **left_join():** all rows from first table, but ignoring non-matching rows from second table
+
+-   **right_join():** all rows from second table, but ignoring non-matching rows from first table
+
+-   **inner_join():** Only matching rows from both tables
+
+-   **full_join():** All rows from both tables, no matter if the match or not
+
+-   **semi_join():** returns the rows from the first table that has a match in the second table
+
+-   **anti_join():** returms the rows from the first table that does not have a match in the second table.
+
+```{r}
+band_members %>% inner_join(band_instruments)
+band_members %>% left_join(band_instruments)
+band_members %>% right_join(band_instruments)
+band_members %>% full_join(band_instruments)
+
+# To suppress the message about joining variables, supply `by`
+band_members %>% inner_join(band_instruments, by = "name")
+# This is good practice in production code
+
+# Use a named `by` if the join variables have different names
+band_members %>% full_join(band_instruments2, by = c("name" = "artist"))
+# By default, the join keys from `x` and `y` are coalesced in the output; use
+# `keep = TRUE` to keep the join keys from both `x` and `y`
+band_members %>%
+  full_join(band_instruments2, by = c("name" = "artist"), keep = TRUE)
+```
+
+## PIVOT
+
+Data can be presented in either long or wide formats, where the table above is a wide format of the observed richness for each sample with the value for each taxonomic level in their own column.It the same data was represented in a long format there would be just three columns, Sample, Tax_level, and richness.Wide format can be better when comparing within samples.
+and are used by some functions, while long format is generally used for plotting and many statistical functions.
+
+To transform data from long to wide format we use the function **pivot_wider(),** while **pivot_longer()** transform data from wide to long format
+
+![pivot_longer()](https://epirhandbook.com/en/images/pivoting/pivot_longer_new.png)
+
+```{r}
+# create dataset
+tmp <- seqdat %>% filter(Abundance > 0) %>% group_by(Sample) %>% summarise(across(Phylum:Genus, n_distinct))
+
+# transform to long format
+tmp.l <- (tmp %>% pivot_longer(-Sample, names_to = "Tax_level", values_to = "Richness"))
+
+head(tmp)
+head(tmp.l)
+
+# Add a variable
+tmp.l <- tmp.l %>% group_by(Tax_level) %>% mutate(rank = min_rank(desc(Richness)))
+
+# Transform to wide format
+tmp.l %>% pivot_wider(names_from = Tax_level, values_from = c(Richness, rank))
+
+tmp.l %>% pivot_wider(names_from = Tax_level, values_from = c(Richness, rank), names_vary = "slowest")
+```
+
+## PHYLOSEQ
+
+When working with phyloseq objects we can use the function **psmelt()** to pivot the OTU table into a long format and then merge it with the sample data and taxonomic data.
+
+```{r}
+# make dataset smaller
+phy <- tax_glom(GP.phy, taxrank = "Phylum")
+taxa_names(phy) <- tax_table(phy)[,2]
+
+# use manual function
+tmp_otu <- data.frame(otu_table(phy)) %>%
+  rownames_to_column(.,"OTU") %>%
+  pivot_longer(-OTU,
+               names_to = "Sample",
+               values_to = "Abundance")
+
+  
+tmp_tax <- data.frame(tax_table(phy)) %>%
+  rownames_to_column("OTU") %>%
+  select(OTU,Kingdom,Phylum)
+  
+tmp_dat <- data.frame(sample_data(phy)) %>%
+  rownames_to_column(.,"Sample")
+
+phy_manual <- full_join(tmp_otu, tmp_dat, by= "Sample") %>%
+  full_join(tmp_tax, by = "OTU")
+
+# use phyloseq built in function
+phy_psmelt <- psmelt(phy)
+
+# compare
+glimpse(phy_manual)
+glimpse(phy_psmelt)
+```
+
+# CHEAT SHEET
+
+You can download a very helpful cheat sheets for:
+
+dplyr: [LINK](https://posit.co/wp-content/uploads/2022/10/data-transformation-1.pdf)
+
+tidyr: [LINK](https://github.com/rstudio/cheatsheets/blob/main/tidyr.pdf)
+
+It can also be downloaded using the Cheat Sheets section under RStudio help

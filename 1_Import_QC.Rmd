@@ -151,7 +151,7 @@ Rcurve_data <- function(physeq, ntables=10, step=250,maxdepth = max(sample_sums(
 }
 
 # Calculate alpha diversity
-Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_sums(physeq))*0.9), methods=c("Observed","Chao1","ACE","Shannon"), seedstart=500, verbose=FALSE) {
+Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_sums(physeq))*0.9), methods=c("Observed","Chao1","FaithPD","Shannon"), seedstart=500, verbose=FALSE) {
   require("vegan")
   
   # remove samples below depth
@@ -239,6 +239,14 @@ Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_su
       Alpha_diversity$Evenness_sd[z] <- sd(adiv)
     }
     
+    if ("FaithPD" %in% methods){
+      colnames(rare_tab) <- taxa_names(physeq)
+      # Calculate Faith Phylogenetic distance for each rep of sample z
+      tmp <- pd(rare_tab, phy_tree(physeq), include.root = T)
+      Alpha_diversity$FaithPD[z] <- mean(tmp$PD)
+      Alpha_diversity$FaithPD_sd[z] <- sd(tmp$PD)
+    }
+    
   }
 
   # Add alpha diversity to sample data
@@ -247,6 +255,7 @@ Calculate_alpha_div <- function(physeq, ntables=100, depth = round(min(sample_su
   # Return physeq to the environment
   return(output) 
 }
+
 
 # save functions
 save(Calculate_alpha_div, Rcurve_data, file = "scripts/adiv.Rdata")
@@ -346,6 +355,9 @@ load("scripts/clean_tax.Rdata")
 
 # Clean phyloseq object
 phy <- clean_taxa(phy, tax_remove = "Phylum", verbose = TRUE)
+
+# Remove Cyanobacteria/Chloroplast
+phy <- subset_taxa(phy, Phylum != "Cyanobacteria/Chloroplast")
 
 # Save cleaned phyloseq object
 save(phy.org, phy, file="R_objects/cleaned.Rdata")

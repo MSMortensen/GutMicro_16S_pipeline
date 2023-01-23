@@ -1,0 +1,62 @@
+---
+title: "GutMicro Workshop - Data wrangling challenges"
+date: 'r Sys.Date()'
+output:
+  rmdformats::readthedown:
+    toc_depth: 4
+    collapsed: false
+    code_folding: hide
+    number_sections: true
+    highlight: kate
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+library(tidyverse)
+library(phyloseq)
+
+```
+
+# INTRO
+
+This document contains a series of challenges that can be solved using functions from the tidyverse packages (mainly from dplyr and tidyr), but might not be limited to the functions included in the workshop.
+The aim is to solve each challenge using these functions and with code that is easy to read and understand.
+
+When finished knit the document and send the Rmarkdown file to me together with the output.
+
+## load data
+
+The challenges uses that data from the GlobalPatterns dataset
+
+```{r}
+data("GlobalPatterns")
+GP.melt <- psmelt(GlobalPatterns)
+```
+
+# CHALLENGE 1
+
+For each sampletype, what is the average number of unique genera per sample?
+
+```{r challenge_1}
+
+```
+
+# CHALLENGE 2
+
+Which bacterial family is most often the most abundant in the samples?
+
+```{r challenge_2}
+
+```
+
+# CHALLENGE 3
+
+What is the two most dominant genera per SampleType and what are their relative abundance?
+
+```{r challenge_3}
+
+```

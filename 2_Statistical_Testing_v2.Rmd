@@ -107,6 +107,26 @@ Use the flowchart to choose the best parametric test for your data, then test th
 
 ![flowchart for choosing a statistical test](flowchart-for-choosing-a-statistical-test.png)\
 
+# LOAD DATA
+
+To ease loading data we will import it here and save it in a predefined file that will be imported throughout this script. If continuing directly from **1_Import_QC.RData** data can be extracted directly from the phyloseq object of choice (first part of the code block) or imported from any external file using the import function (second part of the code block). *!Delete the option that you do not use!*. The third part of the code block stores the data in a file for easy import later on.
+
+```{r load_data, eval = TRUE}
+
+##### FIRST PART
+# Load phyloseq metadata
+load("R_objects/Phyloseq_harsh.Rdata")
+dat <- as_tibble(sample_data(phy))
+
+##### SECOND PART
+# Load data from table using readr (File > Import Dataset > From Text (readr)...) and paste the code here
+dat <- read_delim("...", delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+#### THIRD PART
+save(dat, file = "R_objects/stat_test_dat.RData")
+```
+
+
 #### **Regression tests**
 
 Regression tests look for **cause-and-effect relationships**. They can be used to estimate the effect of one or more continuous variables on another variable.
@@ -193,24 +213,7 @@ Non-parametric tests don't make as many assumptions about the data, and are usef
 |                                 | -   2 groups         | -   groups come from the same population   |                     |
 +---------------------------------+----------------------+--------------------------------------------+---------------------+
 
-# LOAD DATA
 
-To ease loading data we will import it here and save it in a predefined file that will be imported throughout this script. If continuing directly from **1_Import_QC.RData** data can be extracted directly from the phyloseq object of choice (first part of the code block) or imported from any external file using the import function (second part of the code block). *!Delete the option that you do not use!*. The third part of the code block stores the data in a file for easy import later on.
-
-```{r load_data, eval = TRUE}
-
-##### FIRST PART
-# Load phyloseq metadata
-load("R_objects/Phyloseq_harsh.Rdata")
-dat <- as_tibble(sample_data(phy))
-
-##### SECOND PART
-# Load data from table using readr (File > Import Dataset > From Text (readr)...) and paste the code here
-dat <- read_delim("...", delim = "\t", escape_double = FALSE, trim_ws = TRUE)
-
-#### THIRD PART
-save(dat, file = "R_objects/stat_test_dat.RData")
-```
 
 ## TEST STATISTICAL ASSUMPTIONS
 
